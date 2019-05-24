@@ -121,7 +121,8 @@ below into groups.
   of the `Trait` information (since the resource is itself an aggregator).  
   Free text. Often quite long. Semantics unclear.
 * `metadata` link: information (statements!) about this statement; see below.
-  The node may be `metadata`-linked to any number of `Metadata` nodes.
+  The node may be `metadata`-linked to any number of `MetaData` nodes.
+  A `MetaData` node may be linked from any number of `Trait` nodes.
 
 ### Subject and predicate
 
@@ -166,7 +167,7 @@ only to some subset.
 The following properties provide such scope qualifiers.  The property
 values are text for the web site to use; the text is derived from
 ontology terms that are not stored.  Those terms can be found in
-`Metadata` nodes that repeat the expression of this qualifying
+`MetaData` nodes that repeat the expression of this qualifying
 information.
 
 * `statistical_method` property [more documentation needed]
