@@ -1,179 +1,222 @@
 
+require 'csv'
+
 namespace :paint do
 
-  pred = "http://example.org/slimy"
-  herit = "https://example.org/heritable"
-  resource = "test"
+  @pred = "http://example.org/numlegs"
+  @start = "https://example.org/start-point"
+  @stop = "https://example.org/stop-point"
+  @resource_id = 99999
 
-  desc 'flush'
-  task flush: :environment do
-    TraitBank::query(
-      "MATCH (p:Page {testing: 'yes'})
-       DETACH DELETE p")
+  page_origin = 500000000
 
-    TraitBank::query(
-      "MATCH (t:Trait {predicate: '#{pred}'})
-       DETACH DELETE t")
+  desc 'load'
+  task load: :environment do
+    # Open file paint.tsv ... TBD: make the file name a parameter
+    # Columns: page, stop-point-for, start-point-for, comment, provenance ...
 
-    TraitBank::query(
-      "MATCH (m:MetaData {predicate: '#{herit}'})
-       DETACH DELETE m")
+    # (wait the provenance is going to be the same as for the trait, right?)
+    # store this information somewhere... I guess as fake Traits ??
+    # (doesn't make sense for a trait to have provenance.  It's
+    # the :trait relationship that would have provenance.)
+    # 'page P is a start node for trait T'
+
+    filename = "paint.tsv"
+    process_csv(CSV.open(filename, "r",
+                         { :col_sep => "\t",
+                           :headers => true,
+                           :header_converters => :symbol }))
   end
 
-  desc 'init'
-  task init: :environment do
-    org = 500000000
-    TraitBank::query(
-     "MERGE (p1:Page {page_id: #{org+1}, testing: 'yes'})<-[:parent]-
-            (p2:Page {page_id: #{org+2}, testing: 'yes'})<-[:parent]-
-            (p3:Page {page_id: #{org+3}, testing: 'yes'})<-[:parent]-
-            (p4:Page {page_id: #{org+4}, testing: 'yes'})<-[:parent]-
-            (p5:Page {page_id: #{org+5}, testing: 'yes'})")
-    TraitBank::query(
-     "MATCH (p2:Page {page_id: #{org+2}})
-      MERGE (p2)-[:trait]->
-            (t2:Trait {eol_pk: 'tt_2', 
+  def process_csv(z)
+    # page is a page_id, stop and start are trait resource_ids
+    # TBD: Check headers to make sure they contain 'page' 'stop' and 'start'
+    # z.shift  ???
+    # error unless 'page' in z.headers 
+    # error unless 'stop' in z.headers 
+    # error unless 'start' in z.headers 
+
+    z.each do |row|
+      page_id = Integer(row[:page])
+      if row.key?(:stop)
+        annotate(page_id, row[:stop], @stop, "stop")
+      end
+      if row.key?(:start)
+        annotate(page_id, row[:start], @start, "start")
+      end
+    end
+  end
+
+  # Create a stop or start pseudo-trait on a page, indicate that
+  # painting of the trait indicated by trait_id should stop or
+  # start at that page.
+  # Pred (a URI) indicates whether it's a stop or start.
+  def annotate(page_id, trait_id, pred, tag)
+    annotation_id = "#{page_id}.#{tag}.#{trait_id}"
+    # Pseudo-trait id unique only within resource
+    annotation_eol_pk = "R#{@resource_id}-AK#{annotation_id}"
+    r = TraitBank::query(
+      "MATCH (r:Resource {resource_id: #{@resource_id}}),
+             (p:Page {page_id: #{page_id}})
+       MERGE (t:Trait {eol_pk: '#{annotation_eol_pk}',
+                       resource_pk: '#{annotation_id}',
                        predicate: '#{pred}',
-                       resource_pk: '#{resource}'})-[:metadata]->
-            (m2:MetaData {eol_pk: 'mm_2', predicate: '#{herit}', literal: 'true'})")
-    TraitBank::query(
-     "MATCH (p4:Page {page_id: #{org+4}})
-      MERGE (p4)-[:trait]->
-            (t4:Trait {eol_pk: 'tt_4', 
-                       predicate: '#{pred},
-                       resource_pk: '#{resource}''})-[:metadata]->
-            (m4:MetaData {eol_pk: 'mm_4', predicate: '#{herit}', literal: 'stop'})")
+                       literal: '#{trait_id}'})
+       MERGE (t)-[:supplier]->(r)
+       MERGE (p)-[:trait]->(t)
+       RETURN '#{annotation_id}'")
+    if r["data"].length == 0
+      puts "Failed to add #{annotation_id}"
+    else
+      puts "Added annotation #{annotation_id}"
+    end
+    # TBD: MetaData nodes giving provenance for this pseudo-trait -
+    # something about this file ???
   end
 
-  def get_hierarchy
-    # The hierarchy: get all pages that are descended from any 
-    # page that has a heritable trait.
-    r = TraitBank::query(
-     "MATCH (p:Page)<-[:parent]-
-            (d:Page)-[:parent*1..]->
-            (a:Page)-[:trait]->
-            (t:Trait {resource_pk: '#{resource}'})-[:metadata]->
-            (:MetaData {predicate: '#{herit}'})
-      RETURN d.page_id,        // descendant
-             p.page_id")
-
-    # Debug
-    r["data"].map{|row| print "Child/parent link: #{row}\n"}
-
-    # Index the hierarchy by parent (map parent to list of children)
-    children = Hash.new
-    for result in r["data"] do
-      d_page_id = result[0]
-      p_page_id = result[1]
-      ch = children[p_page_id]
-      if not ch
-        ch = Hash.new
-        children[p_page_id] = ch
-      end
-      ch[d_page_id] = true
-    end
-
-    # Debug
-    print "#{children.length} pages with children\n"
-    children.map{|id, childs| print "Children(#{id}) = #{childs}\n"}
-
-    children
-  end
-
-  def get_heritable_traits
-    # The heritable traits: (compare to previous query)
-    r = TraitBank::query(
-     "MATCH (p:Page)-[:trait]->
-            (t:Trait {resource_pk: '#{resource}'})-[:metadata]->
-            (m:MetaData {predicate: '#{herit}'})
-      RETURN p.page_id, t.predicate, m.literal, t.eol_pk")
-    r["data"]
-
-    # Debug
-    r["data"].map{|row|
-      page_id = row[0]
-      herit = row[2]
-      trait_id = row[3]
-      print "Heritable #{herit} for trait #{trait_id} page #{page_id}\n"
-    }
-
-    # Index traits by page id and predicate (multiple traits per page)
-    heritable = Hash.new
-    for result in r["data"] do
-      page_id = result[0]
-      predicate = result[1]
-      herit = result[2]
-      trait_id = result[3]
-
-      ph = heritable[page_id]
-      if not ph
-        ph = Hash.new
-        heritable[ph] = ch
-      end
-      ph[predicate] = [trait_id, herit]
-    end
-      
-    # Debug - show all heritable traits for nodes that have them
-    for page_id, by_predicate in heritable do
-      print "#{page_id}:\n"
-      for predicate, stuff in by_predicate
-        trait_id = stuff[0]
-        herit = stuff[1]
-        print "  #{trait_id} #{herit} #{predicate}\n"
-      end
-    end
-
-    heritable
-  end
+  # Do the painting.
+  # Another way to do this would be to just paint directly from the
+  # CSV file.  The problem with that is that a change to the DH would
+  # require redoing all paintings for all resources - and how would
+  # that be driven?  Where would the stop and start points be found?
 
   desc 'infer'
   task infer: :environment do
 
-    children = get_hierarchy
-    heritable = get_heritable_traits
+    # Propagate traits from start point to descendants
+    r = TraitBank::query(
+         "MATCH (r:Resource {resource_id: #{@resource_id}})
+                <-[:supplier]-(t:Trait {predicate: '#{@start}'})
+                <-[:trait]-(:Page)
+                <-[:parent*0..]-(q:Page),
+                (r:Resource {resource_id: #{@resource_id}})
+                <-[:supplier]-(s:Trait {resource_pk: t.literal})
+          MERGE (q)-[:inferred_trait]->(s)
+          RETURN q.page_id, s.eol_pk")
+    r["data"].map{|row| puts "Infer via starts: #{row}"}
 
-    # We want: descendants of page a, where a has a trait t that is heritable.
-    # But, filter out descendants for which t is overridden (by, say, u).
-
-    # How are we going to do this?  We get the relevant part of the
-    # hierarchy, and traverse it top down, propagating the heritable
-    # traits down to all descendants, but stopping when overridden.
-
-    def propagate
-      3
-    end
-
-    7
+    # Erase inferred traits from stop point to descendants
+    r = TraitBank::query(
+         "MATCH (r:Resource {resource_id: #{@resource_id}})
+                <-[:supplier]-(t:Trait {predicate: '#{@stop}'})
+                <-[:trait]-(:Page)
+                <-[:parent*0..]-(q:Page)
+                -[i:inferred_trait]->(s:Trait {resource_pk: t.literal})
+          DELETE i
+          RETURN q.page_id, s.eol_pk")
+    r["data"].map{|row| puts "Uninfer via stops: #{row}"}
 
   end
 
+  desc 'test'
+  task test: :environment do
+    process_csv([{:page => page_origin+2, :start => 'tt_2'},
+                 {:page => page_origin+4, :stop => 'tt_2'}])
+    show
+  end
+
+  # *** Debugging utility ***
   desc 'show'
   task show: :environment do
+    show
+  end
+
+  def show
+    puts "State:"
+    # List our private taxa
     r = TraitBank::query(
      "MATCH (p:Page {testing: 'yes'})
-      RETURN p.page_id")
-    r["data"].map{|row| print "Page: #{row}\n"}
+      OPTIONAL MATCH (p)-[:parent]->(q:Page)
+      RETURN p.page_id, q.page_id")
+    r["data"].map{|row| puts "Page: #{row}\n"}
 
+    # Show the resource
     r = TraitBank::query(
-     "MATCH (t:Trait {predicate: '#{pred}', resource_pk: '#{resource}'})<-[:trait]-(p:Page)
-      RETURN t.eol_pk, p.page_id")
-    r["data"].map{|row| print "Trait: #{row}\n"}
+     "MATCH (r:Resource {resource_id: #{@resource_id}})
+      RETURN r.resource_id")
+    r["data"].map{|row| puts "Resource: #{row}\n"}
 
+    # Show all traits for test resource, with their pages,
+    # including stop and start pseudo-traits
     r = TraitBank::query(
-     "MATCH (m:MetaData {predicate: '#{herit}'})<-[:metadata]-(t:Trait)
-      RETURN m.eol_pk, t.eol_pk")
-    r["data"].map{|row| print "MetaData: #{row}\n"}
+     "MATCH (t:Trait)
+            -[:supplier]->(:Resource {resource_id: #{@resource_id}})
+      OPTIONAL MATCH (p:Page)-[:trait]->(t)
+      RETURN t.eol_pk, t.resource_pk, t.predicate, p.page_id")
+    r["data"].map{|row| puts "Trait: #{row}\n"}
 
+    # Show all inferred trait attributions
     r = TraitBank::query(
-     "MATCH (p:Page)-[:inferred_trait]->(t:Trait)<-[:trait]-(q:Page)
-      RETURN p.page_id, t.eol_pk, q.page_id")
+     "MATCH (p:Page)
+            -[:inferred_trait]->(t:Trait)
+            -[:supplier]->(:Resource {resource_id: '#{@resource_id}'}),
+            (q:Page)-[:trait]->(t)
+      RETURN p.page_id, q.page_id, t.resource_pk, t.predicate")
     r["data"].map{|row| print "Inferred: #{row}\n"}
   end
 
-  desc 'paint'
-  task paint: :environment do
-    # TraitBank::query(cql)
-    print 'bar\n'
+  # Create sample hierarchy and resource to test with
+  desc 'init'
+  task init: :environment do
+    # Create sample hierarchy
+    TraitBank::query(
+      "MERGE (p1:Page {page_id: #{page_origin+1}, testing: 'yes'})
+       MERGE (p2:Page {page_id: #{page_origin+2}, testing: 'yes'})
+       MERGE (p3:Page {page_id: #{page_origin+3}, testing: 'yes'})
+       MERGE (p4:Page {page_id: #{page_origin+4}, testing: 'yes'})
+       MERGE (p5:Page {page_id: #{page_origin+5}, testing: 'yes'})
+       MERGE (p2)-[:parent]->(p1)
+       MERGE (p3)-[:parent]->(p2)
+       MERGE (p4)-[:parent]->(p3)
+       MERGE (p5)-[:parent]->(p4)")
+    # Create resource
+    TraitBank::query(
+      "MERGE (:Resource {resource_id: #{@resource_id}})")
+    # Create trait to be painted
+    r = TraitBank::query(
+      "MATCH (p2:Page {page_id: #{page_origin+2}}),
+             (r:Resource {resource_id: #{@resource_id}})
+       MERGE (t2:Trait {eol_pk: 'tt_2_in_this_resource',
+                        resource_pk: 'tt_2', 
+                        predicate: '#{@pred}',
+                        literal: 'value of trait'})
+       MERGE (p2)-[:trait]->(t2)
+       MERGE (t2)-[:supplier]->(r)
+       RETURN t2.eol_pk, p2.page_id")
+    r["data"].map{|row| print "Merged: #{row}\n"}
+    show
+  end
+
+  desc 'flush'
+  task flush: :environment do
+
+    # Get rid of the test resource MetaData nodes (and their :metadata
+    # relationships)
+    TraitBank::query(
+      "MATCH (m:MetaData)
+             <-[:metadata]-(:Trait)
+             -[:supplier]->(:Resource {resource_id: #{@resource_id}})
+       DETACH DELETE m")
+
+    # Get rid of the test resource traits (and their :trait,
+    # :inferred_trait, and :supplier relationships)
+    TraitBank::query(
+      "MATCH (t:Trait)
+             -[:supplier]->(:Resource {resource_id: #{@resource_id}})
+       DETACH DELETE t")
+
+    # Get rid of the resource node itself
+    TraitBank::query(
+      "MATCH (r:Resource {resource_id: #{@resource_id}})
+       DETACH DELETE r")
+
+    # Get rid of taxa introduced for testing purposes
+    TraitBank::query(
+      "MATCH (p:Page {testing: 'yes'})
+       DETACH DELETE p")
+
+    show
+
   end
 
 end
