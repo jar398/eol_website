@@ -1,11 +1,15 @@
+# rake paint:init
+# rake paint:test
+# rake paint:infer
+
 
 require 'csv'
 
 namespace :paint do
 
   @pred = "http://example.org/numlegs"
-  @start = "https://example.org/start-point"
-  @stop = "https://example.org/stop-point"
+  @start = "https://example.org/start-page"
+  @stop = "https://example.org/stop-page"
   @resource_id = 99999
 
   page_origin = 500000000
@@ -39,39 +43,34 @@ namespace :paint do
     z.each do |row|
       page_id = Integer(row[:page])
       if row.key?(:stop)
-        annotate(page_id, row[:stop], @stop, "stop")
+        add_directive(page_id, row[:stop], @stop, "stop")
       end
       if row.key?(:start)
-        annotate(page_id, row[:start], @start, "start")
+        add_directive(page_id, row[:start], @start, "start")
       end
     end
   end
 
-  # Create a stop or start pseudo-trait on a page, indicate that
+  # Create a stop or start pseudo-trait on a page, indicating that
   # painting of the trait indicated by trait_id should stop or
   # start at that page.
   # Pred (a URI) indicates whether it's a stop or start.
-  def annotate(page_id, trait_id, pred, tag)
-    annotation_id = "#{page_id}.#{tag}.#{trait_id}"
+  def add_directive(page_id, trait_id, pred, tag)
     # Pseudo-trait id unique only within resource
-    annotation_eol_pk = "R#{@resource_id}-AK#{annotation_id}"
+    directive_eol_pk = "R#{@resource_id}-BP#{tag}.#{page_id}.#{trait_id}"
     r = TraitBank::query(
-      "MATCH (r:Resource {resource_id: #{@resource_id}}),
-             (p:Page {page_id: #{page_id}})
-       MERGE (t:Trait {eol_pk: '#{annotation_eol_pk}',
-                       resource_pk: '#{annotation_id}',
-                       predicate: '#{pred}',
-                       literal: '#{trait_id}'})
-       MERGE (t)-[:supplier]->(r)
-       MERGE (p)-[:trait]->(t)
-       RETURN '#{annotation_id}'")
+      "MATCH (t:Trait {resource_pk: '#{trait_id}'})
+             -[:supplier]->(r:Resource {resource_id: #{@resource_id}})
+       MERGE (m:MetaData {eol_pk: '#{directive_eol_pk}',
+                          predicate: '#{pred}',
+                          literal: #{page_id}})
+       MERGE (t)-[:metadata]->(m)
+       RETURN m.eol_pk")
     if r["data"].length == 0
-      puts "Failed to add #{annotation_id}"
+      puts "Failed to add #{tag}(#{page_id},#{trait_id})"
     else
-      puts "Added annotation #{annotation_id}"
+      puts "Added #{tag}(#{page_id},#{trait_id})"
     end
-    # TBD: MetaData nodes giving provenance for this pseudo-trait -
-    # something about this file ???
   end
 
   # Do the painting.
@@ -83,28 +82,27 @@ namespace :paint do
   desc 'infer'
   task infer: :environment do
 
-    # Propagate traits from start point to descendants
+    # Propagate traits from start point to descendants.  Filter by resource.
     r = TraitBank::query(
-         "MATCH (r:Resource {resource_id: #{@resource_id}})
-                <-[:supplier]-(t:Trait {predicate: '#{@start}'})
-                <-[:trait]-(:Page)
-                <-[:parent*0..]-(q:Page),
-                (r:Resource {resource_id: #{@resource_id}})
-                <-[:supplier]-(s:Trait {resource_pk: t.literal})
-          MERGE (q)-[:inferred_trait]->(s)
-          RETURN q.page_id, s.eol_pk")
-    r["data"].map{|row| puts "Infer via starts: #{row}"}
+         "MATCH (m:MetaData {predicate: '#{@start}'})
+                <-[:metadata]-(t:Trait)
+                -[:supplier]->(r:Resource {resource_id: #{@resource_id}}),
+                (q:Page)-[:parent*0..]->(p:Page {page_id: m.literal})
+          MERGE (q)-[:inferred_trait]->(t)
+          RETURN q.page_id, t.eol_pk")
+    r["data"].map{|row| puts "Inferred via start directive: #{row}"}
 
-    # Erase inferred traits from stop point to descendants
+    # Erase inferred traits from stop point to descendants.
     r = TraitBank::query(
-         "MATCH (r:Resource {resource_id: #{@resource_id}})
-                <-[:supplier]-(t:Trait {predicate: '#{@stop}'})
-                <-[:trait]-(:Page)
-                <-[:parent*0..]-(q:Page)
-                -[i:inferred_trait]->(s:Trait {resource_pk: t.literal})
+         "MATCH (m:MetaData {predicate: '#{@stop}'})
+                <-[:metadata]-(t:Trait)
+                -[:supplier]->(r:Resource {resource_id: #{@resource_id}}),
+                (q:Page)-[:parent*0..]->(p:Page {page_id: m.literal}),
+                (q)-[:parent*0..]->(p:Page {page_id: m.literal}),
+                (q)-[i:inferred_trait]->(t)
           DELETE i
-          RETURN q.page_id, s.eol_pk")
-    r["data"].map{|row| puts "Uninfer via stops: #{row}"}
+          RETURN q.page_id, t.eol_pk")
+    r["data"].map{|row| puts "Retracted via stop directive: #{row}"}
 
   end
 
@@ -132,24 +130,31 @@ namespace :paint do
 
     # Show the resource
     r = TraitBank::query(
-     "MATCH (r:Resource {resource_id: #{@resource_id}})
-      RETURN r.resource_id")
+      "MATCH (r:Resource {resource_id: #{@resource_id}})
+       RETURN r.resource_id")
     r["data"].map{|row| puts "Resource: #{row}\n"}
 
-    # Show all traits for test resource, with their pages,
-    # including stop and start pseudo-traits
+    # Show all traits for test resource, with their pages
     r = TraitBank::query(
-     "MATCH (t:Trait)
-            -[:supplier]->(:Resource {resource_id: #{@resource_id}})
-      OPTIONAL MATCH (p:Page)-[:trait]->(t)
-      RETURN t.eol_pk, t.resource_pk, t.predicate, p.page_id")
+      "MATCH (t:Trait)
+             -[:supplier]->(:Resource {resource_id: #{@resource_id}})
+       OPTIONAL MATCH (p:Page)-[:trait]->(t)
+       RETURN t.eol_pk, t.resource_pk, t.predicate, p.page_id")
     r["data"].map{|row| puts "Trait: #{row}\n"}
 
-    # Show all inferred trait attributions
+    # Show all MetaData nodes
+    r = TraitBank::query(
+        "MATCH (m:MetaData)
+               <-[:metadata]-(t:Trait)
+               -[:supplier]->(r:Resource {resource_id: #{@resource_id}})
+         RETURN t.resource_pk, m.predicate, m.literal")
+    r["data"].map{|row| puts "Metadatum: #{row}\n"}
+
+    # Show all inferred trait assertions
     r = TraitBank::query(
      "MATCH (p:Page)
             -[:inferred_trait]->(t:Trait)
-            -[:supplier]->(:Resource {resource_id: '#{@resource_id}'}),
+            -[:supplier]->(:Resource {resource_id: #{@resource_id}}),
             (q:Page)-[:trait]->(t)
       RETURN p.page_id, q.page_id, t.resource_pk, t.predicate")
     r["data"].map{|row| print "Inferred: #{row}\n"}
