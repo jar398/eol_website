@@ -1,11 +1,15 @@
-# rake paint:init
-# rake paint:test or rake paint:load
-# rake paint:infer
-# rake paint:show
+# export SERVER="http://127.0.0.1:3000/"
+# export TOKEN=`cat ~/Sync/eol/admin.token`
+# COMMAND=flush ruby -r ./lib/painter.rb -e Painter.main
 
 require 'csv'
 
-namespace :paint do
+# These are required if we want to be an HTTP client:
+require 'net/http'
+require 'json'
+require 'cgi'
+
+class Painter
 
   @pred = "http://example.org/numlegs"
   @start = "http://content.eol.org/terms/516950"
@@ -15,23 +19,79 @@ namespace :paint do
 
   page_origin = 500000000
 
-  def get_resource
-    # Choose the resource
+  def self.main
+    server = ENV['SERVER'] || "https://eol.org/"
+    token = ENV['TOKEN'] || STDERR.puts("** No TOKEN provided")
+    query_fn = Proc.new {|cql| query_via_http(server, token, cql)}
+    painter = new(query_fn)
+
+    command = ENV["COMMAND"]
     if ENV.key?("RESOURCE")
-      Integer(ENV["RESOURCE"])
+      resource = Integer(ENV["RESOURCE"])
     else
-      @silly_resource
+      resource = @silly_resource
+    end
+
+    case command
+    when "paint" then    # infer
+      painter.paint(resource)
+    when "init" then
+      painter.populate(resource)
+    when "test" then
+      painter.test(resource)
+    when "load" then
+      filename = get_directives_filename
+      painter.load_directives(filename, resource)
+    when "show" then
+      painter.show(resource)
+    when "flush" then
+      painter.flush(resource)
+    else
+      STDERR.puts "Unrecognized command: #{command}"
+    end
+  end
+
+  def initialize(query_fn)
+    @query_fn = query_fn
+  end
+
+  def run_query(cql)
+    # TraitBank::query(cql)
+    json = @query_fn.call(cql)
+    if json && json["data"].length > 100
+      # Throttle load on server
+      sleep(1)
+    end
+    json
+  end
+
+  # A particular query method for doing queries using the EOL v3 API over HTTP
+  # CODE COPIED FROM traits_dumper.rb - we might want to facto this out...
+
+  def self.query_via_http(server, token, cql)
+    # Need to be a web client.
+    # "The Ruby Toolbox lists no less than 25 HTTP clients."
+    escaped = CGI::escape(cql)
+    uri = URI("#{server}service/cypher?query=#{escaped}")
+    request = Net::HTTP::Get.new(uri)
+    request['Authorization'] = "JWT #{token}"
+    use_ssl = uri.scheme.start_with?("https")
+    response = Net::HTTP.start(uri.hostname, uri.port, :use_ssl => use_ssl) {|http|
+      http.request(request)
+    }
+    if response.is_a?(Net::HTTPSuccess)
+      JSON.parse(response.body)    # can return nil
+    else
+      STDERR.puts(response.body)
+      nil
     end
   end
 
   # Do branch painting based on directives that are already in the graphdb.
 
-  desc 'infer'
-  task infer: :environment do
-    resource = get_resource
-
+  def paint(resource)
     # Propagate traits from start point to descendants.  Filter by resource.
-    r = TraitBank::query(
+    r = run_query(
          "MATCH (m:MetaData {predicate: '#{@start}'})
                 <-[:metadata]-(t:Trait)
                 -[:supplier]->(r:Resource {resource_id: #{resource}}),
@@ -41,7 +101,7 @@ namespace :paint do
     r["data"].map{|row| puts "Inferred via start directive: #{row}"}
 
     # Erase inferred traits from stop point to descendants.
-    r = TraitBank::query(
+    r = run_query(
          "MATCH (m:MetaData {predicate: '#{@stop}'})
                 <-[:metadata]-(t:Trait)
                 -[:supplier]->(r:Resource {resource_id: #{resource}}),
@@ -68,16 +128,13 @@ namespace :paint do
 
   # Load directives from TSV file
 
-  desc 'load'
-  task load: :environment do
+  def load_directives(filename, resource)
     # Columns: page, stop-point-for, start-point-for, comment
-
-    filename = get_directives_filename
     process_csv(CSV.open(filename, "r",
                          { :col_sep => "\t",
                            :headers => true,
                            :header_converters => :symbol }),
-                get_resource)
+                resource)
   end
 
   def process_csv(z, resource)
@@ -105,7 +162,7 @@ namespace :paint do
   def add_directive(page_id, trait_id, pred, tag, resource)
     # Pseudo-trait id unique only within resource
     directive_eol_pk = "R#{resource}-BP#{tag}.#{page_id}.#{trait_id}"
-    r = TraitBank::query(
+    r = run_query(
       "MATCH (t:Trait {resource_pk: '#{trait_id}'})
              -[:supplier]->(r:Resource {resource_id: #{resource}})
        MERGE (m:MetaData {eol_pk: '#{directive_eol_pk}',
@@ -122,9 +179,7 @@ namespace :paint do
 
   # Load directives specified inline (not from a file)
 
-  desc 'test'
-  task test: :environment do
-    resource = get_resource
+  def test(resource)
     process_csv([{:page => page_origin+2, :start => 'tt_2'},
                  {:page => page_origin+4, :stop => 'tt_2'}],
                 resource)
@@ -132,28 +187,23 @@ namespace :paint do
   end
 
   # *** Debugging utility ***
-  desc 'show'
-  task show: :environment do
-    show(get_resource)
-  end
-
   def show(resource)
     puts "State:"
     # List our private taxa
-    r = TraitBank::query(
+    r = run_query(
      "MATCH (p:Page {testing: 'yes'})
       OPTIONAL MATCH (p)-[:parent]->(q:Page)
       RETURN p.page_id, q.page_id")
     r["data"].map{|row| puts "Page: #{row}\n"}
 
     # Show the resource
-    r = TraitBank::query(
+    r = run_query(
       "MATCH (r:Resource {resource_id: #{resource}})
        RETURN r.resource_id")
     r["data"].map{|row| puts "Resource: #{row}\n"}
 
     # Show all traits for test resource, with their pages
-    r = TraitBank::query(
+    r = run_query(
       "MATCH (t:Trait)
              -[:supplier]->(:Resource {resource_id: #{resource}})
        OPTIONAL MATCH (p:Page)-[:trait]->(t)
@@ -161,7 +211,7 @@ namespace :paint do
     r["data"].map{|row| puts "Trait: #{row}\n"}
 
     # Show all MetaData nodes
-    r = TraitBank::query(
+    r = run_query(
         "MATCH (m:MetaData)
                <-[:metadata]-(t:Trait)
                -[:supplier]->(r:Resource {resource_id: #{resource}})
@@ -169,7 +219,7 @@ namespace :paint do
     r["data"].map{|row| puts "Metadatum: #{row}\n"}
 
     # Show all inferred trait assertions
-    r = TraitBank::query(
+    r = run_query(
      "MATCH (p:Page)
             -[:inferred_trait]->(t:Trait)
             -[:supplier]->(:Resource {resource_id: #{resource}}),
@@ -179,12 +229,10 @@ namespace :paint do
   end
 
   # Create sample hierarchy and resource to test with
-  desc 'init'
-  task init: :environment do
-    resource = get_resource
+  def populate(resource)
 
     # Create sample hierarchy
-    TraitBank::query(
+    run_query(
       "MERGE (p1:Page {page_id: #{page_origin+1}, testing: 'yes'})
        MERGE (p2:Page {page_id: #{page_origin+2}, testing: 'yes'})
        MERGE (p3:Page {page_id: #{page_origin+3}, testing: 'yes'})
@@ -195,10 +243,10 @@ namespace :paint do
        MERGE (p4)-[:parent]->(p3)
        MERGE (p5)-[:parent]->(p4)")
     # Create resource
-    TraitBank::query(
+    run_query(
       "MERGE (:Resource {resource_id: #{resource}})")
     # Create trait to be painted
-    r = TraitBank::query(
+    r = run_query(
       "MATCH (p2:Page {page_id: #{page_origin+2}}),
              (r:Resource {resource_id: #{resource}})
        MERGE (t2:Trait {eol_pk: 'tt_2_in_this_resource',
@@ -212,13 +260,10 @@ namespace :paint do
     show(resource)
   end
 
-  desc 'flush'
-  task flush: :environment do
-    resource = get_resource
-
+  def flush(resource)
     # Get rid of the test resource MetaData nodes (and their :metadata
     # relationships)
-    TraitBank::query(
+    run_query(
       "MATCH (m:MetaData)
              <-[:metadata]-(:Trait)
              -[:supplier]->(:Resource {resource_id: #{resource}})
@@ -226,18 +271,18 @@ namespace :paint do
 
     # Get rid of the test resource traits (and their :trait,
     # :inferred_trait, and :supplier relationships)
-    TraitBank::query(
+    run_query(
       "MATCH (t:Trait)
              -[:supplier]->(:Resource {resource_id: #{resource}})
        DETACH DELETE t")
 
     # Get rid of the resource node itself
-    TraitBank::query(
+    run_query(
       "MATCH (r:Resource {resource_id: #{resource}})
        DETACH DELETE r")
 
     # Get rid of taxa introduced for testing purposes
-    TraitBank::query(
+    run_query(
       "MATCH (p:Page {testing: 'yes'})
        DETACH DELETE p")
 
