@@ -2,6 +2,10 @@
 # export TOKEN=`cat ~/Sync/eol/admin.token`
 # COMMAND=flush ruby -r ./lib/painter.rb -e Painter.main
 
+# You might want to put 'config.log_level = :warn'
+# in config/environments/development.rb
+# to reduce noise emitted to console.
+
 require 'csv'
 
 # These are required if we want to be an HTTP client:
@@ -11,13 +15,13 @@ require 'cgi'
 
 class Painter
 
-  @pred = "http://example.org/numlegs"
-  @start = "http://content.eol.org/terms/516950"
-  @stop = "http://content.eol.org/terms/516949"
   @silly_resource = 99999
   @silly_file = "directives.tsv"
+  @page_origin = 500000000
 
-  page_origin = 500000000
+  START_TERM = "http://content.eol.org/terms/516950"
+  STOP_TERM = "http://content.eol.org/terms/516949"
+  SILLY_TERM = "http://example.org/numlegs"
 
   def self.main
     server = ENV['SERVER'] || "https://eol.org/"
@@ -36,9 +40,9 @@ class Painter
     when "paint" then    # infer
       painter.paint(resource)
     when "init" then
-      painter.populate(resource)
-    when "test" then
-      painter.test(resource)
+      painter.populate(resource, @page_origin)
+    when "test" then            # Add some directives
+      painter.test(resource, @page_origin)
     when "load" then
       filename = get_directives_filename
       painter.load_directives(filename, resource)
@@ -92,7 +96,7 @@ class Painter
   def paint(resource)
     # Propagate traits from start point to descendants.  Filter by resource.
     r = run_query(
-         "MATCH (m:MetaData {predicate: '#{@start}'})
+         "MATCH (m:MetaData {predicate: '#{START_TERM}'})
                 <-[:metadata]-(t:Trait)
                 -[:supplier]->(r:Resource {resource_id: #{resource}}),
                 (q:Page)-[:parent*0..]->(p:Page {page_id: m.literal})
@@ -102,7 +106,7 @@ class Painter
 
     # Erase inferred traits from stop point to descendants.
     r = run_query(
-         "MATCH (m:MetaData {predicate: '#{@stop}'})
+         "MATCH (m:MetaData {predicate: '#{STOP_TERM}'})
                 <-[:metadata]-(t:Trait)
                 -[:supplier]->(r:Resource {resource_id: #{resource}}),
                 (q:Page)-[:parent*0..]->(p:Page {page_id: m.literal}),
@@ -147,10 +151,10 @@ class Painter
     z.each do |row|
       page_id = Integer(row[:page])
       if row.key?(:stop)
-        add_directive(page_id, row[:stop], @stop, "stop", resource)
+        add_directive(page_id, row[:stop], STOP_TERM, "stop", resource)
       end
       if row.key?(:start)
-        add_directive(page_id, row[:start], @start, "start", resource)
+        add_directive(page_id, row[:start], START_TERM, "start", resource)
       end
     end
   end
@@ -179,7 +183,7 @@ class Painter
 
   # Load directives specified inline (not from a file)
 
-  def test(resource)
+  def test(resource, page_origin)
     process_csv([{:page => page_origin+2, :start => 'tt_2'},
                  {:page => page_origin+4, :stop => 'tt_2'}],
                 resource)
@@ -229,7 +233,7 @@ class Painter
   end
 
   # Create sample hierarchy and resource to test with
-  def populate(resource)
+  def populate(resource, page_origin)
 
     # Create sample hierarchy
     run_query(
@@ -251,7 +255,7 @@ class Painter
              (r:Resource {resource_id: #{resource}})
        MERGE (t2:Trait {eol_pk: 'tt_2_in_this_resource',
                         resource_pk: 'tt_2', 
-                        predicate: '#{@pred}',
+                        predicate: '#{SILLY_TERM}',
                         literal: 'value of trait'})
        MERGE (p2)-[:trait]->(t2)
        MERGE (t2)-[:supplier]->(r)
