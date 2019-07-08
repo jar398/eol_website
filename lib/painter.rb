@@ -13,8 +13,6 @@ require 'net/http'
 require 'json'
 require 'cgi'
 
-require_relative 'paginator'
-
 class Painter
 
   @silly_resource = 99999
@@ -24,7 +22,6 @@ class Painter
   START_TERM = "https://eol.org/schema/terms/starts_at"
   STOP_TERM  = "https://eol.org/schema/terms/stops_at"
   SILLY_TERM = "http://example.org/numlegs"
-  LIMIT = 1000000
 
   def self.main
     server = ENV['SERVER'] || "https://eol.org/"
@@ -44,123 +41,25 @@ class Painter
       painter.infer(resource)
     when "paint" then    # assert the inferences
       painter.paint(resource)
+    when "init" then
+      painter.populate(resource, @page_origin)
+    when "test" then            # Add some directives
+      painter.test(resource, @page_origin)
+    when "load" then
+      filename = get_directives_filename
+      painter.load_directives(filename, resource)
+    when "show" then
+      painter.show(resource)
+    when "flush" then
+      painter.flush(resource)
     else
-      painter.debug(command, resource)
+      STDERR.puts "Unrecognized command: #{command}"
     end
   end
 
   def initialize(query_fn)
     @query_fn = query_fn
-    @paginator = Paginator.new(query_fn)
-    @pagesize = 10000
   end
-
-  # Do branch painting based on directives that are already in the graphdb.
-
-  def infer(resource)
-    paint_or_infer(resource, "", "")
-  end
-
-  def paint(resource)
-    paint_or_infer(resource,
-                   "MERGE (q)-[:inferred_trait]->(t)",
-                   ", (q)-[i:inferred_trait]->(t) DELETE i")
-  end
-
-  def paint_or_infer(resource, merge, delete)
-    show_directives(resource)
-
-    # Propagate traits from start point to descendants.  Filter by resource.
-    # Currently assumes the painted trait has an object_term, but this
-    # should be generalized to allow measurement as well
-    query = 
-         "MATCH (r:Resource {resource_id: #{resource}})<-[:supplier]-
-                (t:Trait)-[:metadata]->
-                (m:MetaData)-[:predicate]->
-                (:Term {uri: '#{START_TERM}'}),
-                (t)-[:object_term]->(o:Term)
-          WITH t, o, toInteger(m.measurement) as ancestor
-          MATCH (a:Page {page_id: ancestor})<-[:parent*1..]-(d:Page)
-          #{merge}
-          RETURN d.page_id, t.eol_pk, t.measurement, o.name, d.canonical"
-    STDERR.puts(query)
-    assert_path = "assert.csv"
-    r = run_paged_query(query, @pagesize, assert_path) #adds LIMIT
-    return unless r
-    #STDERR.puts("Starts query: #{r["data"].size} rows")
-
-    # Index inferences to prepare for deletion
-    inferences = {}
-
-    CSV.foreach(r, {encoding:'UTF-8'}) do |page, trait, value, ovalue, name|
-      inferences[[page, trait]] = [name, value, ovalue]
-    end
-    STDERR.puts("Found #{inferences.size} potential inferences")
-
-    # Erase inferred traits from stop point to descendants.
-    query = 
-         "MATCH (r:Resource {resource_id: #{resource}})<-[:supplier]-
-                (t:Trait)-[:metadata]->
-                (m:MetaData)-[:predicate]->
-                (:Term {uri: '#{STOP_TERM}'}),
-                (p:Page)-[:trait]->(t)
-          WITH p, t, toInteger(m.measurement) as ancestor
-          MATCH (a:Page {page_id: ancestor})<-[:parent*1..]-(d:Page)
-          #{delete}
-          RETURN d.page_id, t.eol_pk, ancestor, a.canonical, p.page_id, p.canonical"
-    retract_path = "retract.csv"
-    r = run_paged_query(query, @pagesize, retract_path) #adds LIMIT
-    if r
-      winners = 0
-      losers = 0
-      orphans = {}
-      CSV.foreach(r, {encoding:'UTF-8'}) do |page, trait, stop_point, stop_name, org_id, org_name|
-        if inferences.include?([page, trait])
-          winners += 1
-        else
-          losers += 1
-          orphans[stop_point] = [stop_name, org_id, org_name]
-        end
-      end
-      # Show the orphans
-      if orphans.size > 0
-        STDERR.puts("#{orphans.size} painted pages under stop points are not under start points:")
-        orphans.each do |stop_point, info|
-          (stop_name, org_id, org_name) = info
-          STDERR.puts("#{stop_point},#{stop_name},#{org_id},#{org_name}")
-        end
-      end
-      STDERR.puts("Deleting #{winners} inferences, failing to delete #{losers} inferences")
-
-      # Now actually delete them
-      CSV.foreach(r, {encoding:'UTF-8'}) do |page, trait, stop_point, stop_name, org_id, org_name|
-        inferences.delete([page, trait])
-      end
-
-      STDERR.puts("Net #{inferences.size}")
-    end
-
-    # Write remaining inferences as CSV
-    CSV.open("retain.csv", "wb:UTF-8") do |csv|
-      csv << ["page", "name", "trait", "value"]
-      inferences.each do |key, info|
-        (page, trait) = key
-        (name, value, ovalue) = info
-        csv << [page, name, trait, value, ovalue]
-      end
-    end
-
-    # show(resource)
-  end
-
-  # For long-running queries (writes to path).  Return value if path
-  # on success, nil on failure.
-
-  def run_paged_query(cql, pagesize, path)
-    Paginator.new(@query_fn).supervise_query(cql, nil, pagesize, path)
-  end
-
-  # For small / debugging queries
 
   def run_query(cql)
     # TraitBank::query(cql)
@@ -194,71 +93,76 @@ class Painter
     end
   end
 
-  # ------------------------------------------------------------------
-  # Everything from here down is for debugging.
+  # Do branch painting based on directives that are already in the graphdb.
 
-  def debug(command, resource)
-    case command
-    when "init" then
-      populate(resource, @page_origin)
-    when "test" then            # Add some directives
-      test(resource, @page_origin)
-    when "load" then
-      filename = get_directives_filename
-      load_directives(filename, resource)
-    when "show" then
-      show(resource)
-    when "directives" then
-      show_directives(resource)
-    when "flush" then
-      flush(resource)
-    else
-      STDERR.puts("Unrecognized command: #{command}")
-    end
+  def infer(resource)
+    paint_or_infer(resource, "", "")
   end
 
+  def paint(resource)
+    paint_or_infer(resource,
+                   "MERGE (q)-[:inferred_trait]->(t)",
+                   ", (q)-[i:inferred_trait]->(t) DELETE i")
+  end
+
+  def paint_or_infer(resource, merge, delete)
+    # Propagate traits from start point to descendants.  Filter by resource.
+    query = 
+         "MATCH (r:Resource {resource_id: #{resource}})<-[:supplier]-
+                (t:Trait)-[:metadata]->
+                (m:MetaData)-[:predicate]->
+                (:Term {uri: '#{START_TERM}'})
+          WITH t, toInteger(m.measurement) as ancestor
+          MATCH (a:Page {page_id: ancestor})
+                <-[:parent*0..]-(d:Page)
+          #{merge}
+          RETURN t.eol_pk, d.page_id, ancestor, a.canonical
+          LIMIT 10"
+    puts query
+
+    r = run_query(query)
+    return unless r
+    r["data"].map{|row| puts "Inferred via start directive: #{row}"}
+
+    # Erase inferred traits from stop point to descendants.
+    r = run_query(
+         "MATCH (r:Resource {resource_id: #{resource}})<-[:supplier]-
+                (t:Trait)-[:metadata]->
+                (m:MetaData)-[:predicate]->
+                (:Term {uri: '#{STOP_TERM}'}),
+                (a:Page {page_id: m.measurement})-[:parent*0..]->
+                (d:Page)
+                #{delete}
+          RETURN d.page_id, t.eol_pk
+          LIMIT 10000")
+    r["data"].map{|row| puts "Retracted via stop directive: #{row}"}
+
+    # show(resource)
+  end
+
+  # Everything else here is for debugging.
+
   def get_directives_filename
+    # Choose the resource
     if ENV.key?("DIRECTIVES")
-      ENV["DIRECTIVES"]
+      Integer(ENV["DIRECTIVES"])
     else
       @silly_file
     end
   end
 
-  def show_directives(resource)
-    show_stxx_directives(resource, START_TERM, "Start")
-    show_stxx_directives(resource, STOP_TERM, "Stop")
-  end
-
-  def show_stxx_directives(resource, uri, tag)
-    r = run_query(
-        "MATCH (r:Resource {resource_id: #{resource}})<-[:supplier]-
-               (t:Trait)-[:metadata]->
-               (m:MetaData)-[:predicate]->
-               (:Term {uri: '#{uri}'}),
-               (p:Page)-[:trait]->(t)
-         WITH p, t, toInteger(m.measurement) as point_id
-         MATCH (point:Page {page_id: point_id})
-         RETURN point.page_id, point.canonical, t.eol_pk, p.page_id, p.canonical
-         LIMIT 10000")
-    if r
-      STDERR.puts("#{r["data"].size} stop directives")
-      r["data"][0..10].map{|row| STDERR.puts("#{tag} directive: #{row}")} if r
-    end
-  end
-
-  # Load directives from TSV file... this was just for testing
+  # Load directives from TSV file
 
   def load_directives(filename, resource)
     # Columns: page, stop-point-for, start-point-for, comment
-    process_stream(CSV.open(filename, "r",
+    process_csv(CSV.open(filename, "r",
                          { :col_sep => "\t",
                            :headers => true,
                            :header_converters => :symbol }),
                 resource)
   end
 
-  def process_stream(z, resource)
+  def process_csv(z, resource)
     # page is a page_id, stop and start are trait resource_pks
     # TBD: Check headers to make sure they contain 'page' 'stop' and 'start'
     # z.shift  ???
@@ -276,7 +180,6 @@ class Painter
     end
   end
 
-  # Utility for testing purposes only:
   # Create a stop or start pseudo-trait on a page, indicating that
   # painting of the trait indicated by trait_id should stop or
   # start at that page.
@@ -293,18 +196,18 @@ class Painter
        MERGE (t)-[:metadata]->(m)
        RETURN m.eol_pk")
     if r["data"].length == 0
-      STDERR.puts("Failed to add #{tag}(#{page_id},#{trait_id})")
+      puts "Failed to add #{tag}(#{page_id},#{trait_id})"
     else
-      STDERR.puts("Added #{tag}(#{page_id},#{trait_id})")
+      puts "Added #{tag}(#{page_id},#{trait_id})"
     end
   end
 
   # Load directives specified inline (not from a file)
 
   def test(resource, page_origin)
-    process_stream([{:page => page_origin+2, :start => 'tt_2'},
-                    {:page => page_origin+4, :stop => 'tt_2'}],
-                   resource)
+    process_csv([{:page => page_origin+2, :start => 'tt_2'},
+                 {:page => page_origin+4, :stop => 'tt_2'}],
+                resource)
     show(resource)
   end
 
