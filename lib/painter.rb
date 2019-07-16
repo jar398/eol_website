@@ -19,8 +19,8 @@ class Painter
   @silly_file = "directives.tsv"
   @page_origin = 500000000
 
-  START_TERM = "http://content.eol.org/terms/516950"
-  STOP_TERM = "http://content.eol.org/terms/516949"
+  START_TERM = "https://eol.org/schema/terms/starts_at"
+  STOP_TERM  = "https://eol.org/schema/terms/stops_at"
   SILLY_TERM = "http://example.org/numlegs"
 
   def self.main
@@ -37,7 +37,9 @@ class Painter
     end
 
     case command
-    when "paint" then    # infer
+    when "infer" then    # list the inferences
+      painter.infer(resource)
+    when "paint" then    # assert the inferences
       painter.paint(resource)
     when "init" then
       painter.populate(resource, @page_origin)
@@ -93,27 +95,46 @@ class Painter
 
   # Do branch painting based on directives that are already in the graphdb.
 
+  def infer(resource)
+    paint_or_infer(resource, "", "")
+  end
+
   def paint(resource)
+    paint_or_infer(resource,
+                   "MERGE (q)-[:inferred_trait]->(t)",
+                   ", (q)-[i:inferred_trait]->(t) DELETE i")
+  end
+
+  def paint_or_infer(resource, merge, delete)
     # Propagate traits from start point to descendants.  Filter by resource.
-    r = run_query(
-         "MATCH (m:MetaData {predicate: '#{START_TERM}'})
-                <-[:metadata]-(t:Trait)
-                -[:supplier]->(r:Resource {resource_id: #{resource}}),
-                (q:Page)-[:parent*0..]->(p:Page {page_id: m.literal})
-          MERGE (q)-[:inferred_trait]->(t)
-          RETURN q.page_id, t.eol_pk")
+    query = 
+         "MATCH (r:Resource {resource_id: #{resource}})<-[:supplier]-
+                (t:Trait)-[:metadata]->
+                (m:MetaData)-[:predicate]->
+                (:Term {uri: '#{START_TERM}'})
+          WITH t, toInteger(m.measurement) as ancestor
+          MATCH (a:Page {page_id: ancestor})
+                <-[:parent*0..]-(d:Page)
+          #{merge}
+          RETURN t.eol_pk, d.page_id, ancestor, a.canonical
+          LIMIT 10"
+    puts query
+
+    r = run_query(query)
+    return unless r
     r["data"].map{|row| puts "Inferred via start directive: #{row}"}
 
     # Erase inferred traits from stop point to descendants.
     r = run_query(
-         "MATCH (m:MetaData {predicate: '#{STOP_TERM}'})
-                <-[:metadata]-(t:Trait)
-                -[:supplier]->(r:Resource {resource_id: #{resource}}),
-                (q:Page)-[:parent*0..]->(p:Page {page_id: m.literal}),
-                (q)-[:parent*0..]->(p:Page {page_id: m.literal}),
-                (q)-[i:inferred_trait]->(t)
-          DELETE i
-          RETURN q.page_id, t.eol_pk")
+         "MATCH (r:Resource {resource_id: #{resource}})<-[:supplier]-
+                (t:Trait)-[:metadata]->
+                (m:MetaData)-[:predicate]->
+                (:Term {uri: '#{STOP_TERM}'}),
+                (a:Page {page_id: m.measurement})-[:parent*0..]->
+                (d:Page)
+                #{delete}
+          RETURN d.page_id, t.eol_pk
+          LIMIT 10000")
     r["data"].map{|row| puts "Retracted via stop directive: #{row}"}
 
     # show(resource)
@@ -197,13 +218,15 @@ class Painter
     r = run_query(
      "MATCH (p:Page {testing: 'yes'})
       OPTIONAL MATCH (p)-[:parent]->(q:Page)
-      RETURN p.page_id, q.page_id")
+      RETURN p.page_id, q.page_id
+      LIMIT 100")
     r["data"].map{|row| puts "Page: #{row}\n"}
 
     # Show the resource
     r = run_query(
       "MATCH (r:Resource {resource_id: #{resource}})
-       RETURN r.resource_id")
+       RETURN r.resource_id
+       LIMIT 100")
     r["data"].map{|row| puts "Resource: #{row}\n"}
 
     # Show all traits for test resource, with their pages
@@ -211,7 +234,8 @@ class Painter
       "MATCH (t:Trait)
              -[:supplier]->(:Resource {resource_id: #{resource}})
        OPTIONAL MATCH (p:Page)-[:trait]->(t)
-       RETURN t.eol_pk, t.resource_pk, t.predicate, p.page_id")
+       RETURN t.eol_pk, t.resource_pk, t.predicate, p.page_id
+       LIMIT 100")
     r["data"].map{|row| puts "Trait: #{row}\n"}
 
     # Show all MetaData nodes
@@ -219,7 +243,8 @@ class Painter
         "MATCH (m:MetaData)
                <-[:metadata]-(t:Trait)
                -[:supplier]->(r:Resource {resource_id: #{resource}})
-         RETURN t.resource_pk, m.predicate, m.literal")
+         RETURN t.resource_pk, m.predicate, m.literal
+         LIMIT 100")
     r["data"].map{|row| puts "Metadatum: #{row}\n"}
 
     # Show all inferred trait assertions
@@ -228,7 +253,8 @@ class Painter
             -[:inferred_trait]->(t:Trait)
             -[:supplier]->(:Resource {resource_id: #{resource}}),
             (q:Page)-[:trait]->(t)
-      RETURN p.page_id, q.page_id, t.resource_pk, t.predicate")
+      RETURN p.page_id, q.page_id, t.resource_pk, t.predicate
+      LIMIT 100")
     r["data"].map{|row| print "Inferred: #{row}\n"}
   end
 
@@ -245,10 +271,12 @@ class Painter
        MERGE (p2)-[:parent]->(p1)
        MERGE (p3)-[:parent]->(p2)
        MERGE (p4)-[:parent]->(p3)
-       MERGE (p5)-[:parent]->(p4)")
+       MERGE (p5)-[:parent]->(p4)
+       // LIMIT")
     # Create resource
     run_query(
-      "MERGE (:Resource {resource_id: #{resource}})")
+      "MERGE (:Resource {resource_id: #{resource}})
+      // LIMIT")
     # Create trait to be painted
     r = run_query(
       "MATCH (p2:Page {page_id: #{page_origin+2}}),
@@ -259,10 +287,13 @@ class Painter
                         literal: 'value of trait'})
        MERGE (p2)-[:trait]->(t2)
        MERGE (t2)-[:supplier]->(r)
-       RETURN t2.eol_pk, p2.page_id")
+       RETURN t2.eol_pk, p2.page_id
+       // LIMIT")
     r["data"].map{|row| print "Merged: #{row}\n"}
     show(resource)
   end
+
+  # Doesn't work under new authorization rules.
 
   def flush(resource)
     # Get rid of the test resource MetaData nodes (and their :metadata
@@ -271,24 +302,28 @@ class Painter
       "MATCH (m:MetaData)
              <-[:metadata]-(:Trait)
              -[:supplier]->(:Resource {resource_id: #{resource}})
-       DETACH DELETE m")
+       DETACH DELETE m
+       LIMIT 10000")
 
     # Get rid of the test resource traits (and their :trait,
     # :inferred_trait, and :supplier relationships)
     run_query(
       "MATCH (t:Trait)
              -[:supplier]->(:Resource {resource_id: #{resource}})
-       DETACH DELETE t")
+       DETACH DELETE t
+       LIMIT 10000")
 
     # Get rid of the resource node itself
     run_query(
       "MATCH (r:Resource {resource_id: #{resource}})
-       DETACH DELETE r")
+       DETACH DELETE r
+       LIMIT 10000")
 
     # Get rid of taxa introduced for testing purposes
     run_query(
       "MATCH (p:Page {testing: 'yes'})
-       DETACH DELETE p")
+       DETACH DELETE p
+       LIMIT 10000")
 
     show(resource)
 
