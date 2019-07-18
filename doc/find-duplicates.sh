@@ -63,7 +63,6 @@ function check_clade {
   >&2 echo "##### check_clade $clade $name $strictness $outfile #####"
   prop $clade $name measurement $strictness $outfile
   prop $clade $name normal_measurement $strictness $outfile
-  prop $clade $name literal $strictness $outfile
   prop $clade $name object_page_id $strictness $outfile
   rel $clade $name object_term $strictness $outfile
 }

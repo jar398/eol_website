@@ -6,7 +6,8 @@ Trait information is sometimes copied from one source to another,
 leading to multiple records in EOL that essentially say the same
 thing.
 
-For example, the 'weaning age' of the spiny mouse (Acomys cahirinus)
+For example, the 'weaning age' of the spiny mouse 
+([Acomys cahirinus](https://eol.org/pages/1037942/data))
 is recorded as 14 days by two EOL trait records.  One comes from the
 [AnAge](http://genomics.senescence.info/species/entry.php?species=Acomys_cahirinus)
 web site and the other is from the Pantheria data set ([EA
@@ -14,7 +15,7 @@ E090-184-D1](http://esapubs.org/archive/ecol/E090/184/); article is
 Jones et al, Ecology 90:2648).  Because there are other species with
 the same pair of sources with identical values for various traits, it
 seems likely that the origin of the information in the two sources is
-the same in each instance.
+the same in each instance.  (This is not always the case of course.)
 
 Cases where the same variable is recorded with different values are
 also of interest for data cleaning and data quality purposes.
@@ -70,6 +71,23 @@ trait records that match these properties.
 
 Cypher's `WITH` clause is tremendously useful.
 
+## Finding trait records that cover the same predicate (variable)
+
+By removing the value (`t.normal_measurement` in this case) from the
+processing pipeline we get a superset of results that includes cases
+where different resources record values the same predicate bur
+disagree on what the value is.
+
+    MATCH (a:Page {page_id: 1642})<-[:parent*0..]-
+          (p:Page)-[:trait]->(t:Trait)-[:supplier]->(r:Resource),
+          (t)-[:predicate]->(pred:Term)
+    WHERE t.normal_measurement IS NOT NULL
+    WITH p, pred, COLLECT(DISTINCT r.resource_id) AS resources
+    WHERE SIZE(resources) > 1
+    RETURN p.page_id, pred.name, resources
+    LIMIT 20
+
+
 ## Summarizing patterns of trait duplication
 
 As it happens, there are often many pages that follow the same pattern
@@ -84,7 +102,7 @@ records for many different taxa (pages).  It is useful to summarize these.
     WHERE SIZE(resources) > 1
     WITH pred, value, resources,
          COLLECT(DISTINCT p.page_id) AS pages
-    RETURN DISTINCT pred.name, resources, pages
+    RETURN DISTINCT pred.name, value, resources, pages
     LIMIT 20
 
 For each predicate this creates a separate row for each value, showing
@@ -102,12 +120,13 @@ another.
 
 ## Generating a report
 
-To get the big picture we want to perform this analysis for many
-different taxa and the many different properties under which the value
-is stored (`literal` and so on).
+To get the big picture, we want to perform this analysis for many
+different taxa and the various properties under which the value is
+stored (`measurement`, `literal`, `object_page_id`).
 
-A minor variation on the query is required when the value is stored
+A variation on the query is required when the value is stored
 under a relation (`:object_term`) instead of a property.
 
-These is an uninteresting shell script that composes all of these
-query variants and compiles the results into two summary files.
+These is an [uninteresting shell script](find-duplicates.sh) that
+creates all of these query variants and compiles the results into two
+summary files.
