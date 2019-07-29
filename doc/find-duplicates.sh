@@ -13,21 +13,23 @@ set -e
 [ x$TOKENFILE = x ] && TOKENFILE=~/Sync/eol/api.token
 
 # Change TEMPDIR to a scratch directory for use here.
-#  E.g. /tmp/dup-report would work
-[ x$TEMPDIR = x ] && TEMPDIR=~/eol/dup-report
+[ x$TEMPDIR = x ] && TEMPDIR=/tmp/dup-report
 
 [ x$SERVER = x ] && SERVER=https://eol.org/
 
 function main {
+  >&2 echo "Server is $SERVER, temp is $TEMPDIR"
   strictness=$1
   # I had 'clade' here but shell variables seem to be global in bash and 
   # there was a hard-to-debug conflict. 
+  # The shell is just an awful awful language for programming in!
   qlade=$2
+  properti=$3
   if [ x$strictness = x ]; then
-    report strict $qlade 
-    report lax $qlade 
+    report strict $qlade $properti
+    report lax $qlade $properti
   else
-    report $strictness $qlade 
+    report $strictness $qlade $properti
   fi
 }
 
@@ -36,21 +38,32 @@ function main {
 function report {
   strictness=$1
   clade=$2
+  property=$3
   >&2 echo "##### report $strictness $clade #####"
-
-  outfile=$TEMPDIR/dups-$strictness.csv
   mkdir -p $TEMPDIR
-  cat /dev/null >$outfile
   if [ x$clade != x ]; then
-    check_clade $clade $clade $strictness $outfile
+    if [ x$property != x ]; then
+      if [ $property = object_term ]; then
+        rel $clade $clade $property $strictness $outfile
+      else
+        prop $clade $clade $property $strictness $outfile
+      fi
+    else
+      outfile=$TEMPDIR/dups-$clade-$strictness.csv
+      cat /dev/null >$outfile
+      check_clade $clade $clade $strictness $outfile
+    fi
   else
+    outfile=$TEMPDIR/dups-$strictness.csv
+    cat /dev/null >$outfile
     check_clade   2774383 vertebrates $strictness $outfile
     check_clade      2195 mollusks $strictness $outfile
     check_clade       164 arthropods $strictness $outfile
     check_clade  42430800 plants $strictness $outfile
     check_clade  46702383 fungi $strictness $outfile
+    check_clade    106805 bacteria $strictness $outfile
+    >&2 echo "Wrote report to $outfile"
   fi
-  >&2 echo "Wrote report to $outfile"
 }
 
 # Run all queries for a given clade and strictness
@@ -62,26 +75,26 @@ function check_clade {
   outfile=$4
   >&2 echo "##### check_clade $clade $name $strictness $outfile #####"
   prop $clade $name measurement $strictness $outfile
-  prop $clade $name normal_measurement $strictness $outfile
   prop $clade $name object_page_id $strictness $outfile
   rel $clade $name object_term $strictness $outfile
+  # Skipping: literal (usually replicates object_term) and normal_measurement
 }
 
 function prop {
   clade=$1
-  name=$2
+  group=$2
   property=$3
   strictness=$4
   outfile=$5
-  >&2 echo "##### prop $name $property $strictness #####"
+  >&2 echo "##### prop $group $property $strictness #####"
   if [ $strictness = strict ]; then
-    bar="t.$property as value,"
-    foo="value,"
+    foo="t.$property as value,"
+    baz="value,"
   else
-    bar=""
     foo=""
+    baz=""
   fi
-  stage=$TEMPDIR/$name-$property-$strictness.csv
+  stage=$TEMPDIR/$group-$property-$strictness.csv
   sleep 1
   time python doc/cypher.py --format csv \
     --server $SERVER --tokenfile $TOKENFILE \
@@ -89,18 +102,21 @@ function prop {
                    (p:Page)-[:trait]->(t:Trait)-[:supplier]->(r:Resource),
                    (t)-[:predicate]->(pred:Term)
              WHERE t.$property IS NOT NULL
-             WITH p, pred, $bar
+             WITH p, pred, $foo
                   COLLECT(DISTINCT r.resource_id) AS resources
              WHERE SIZE(resources) > 1
              WITH '$property' as property,
-                  '$name' as group,
-                  pred, $foo resources,
+                  '$group' as group,
+                  pred, $baz resources,
                   COLLECT(DISTINCT p.page_id) AS pages
-             RETURN DISTINCT pred.name, property, group, resources, pages
+             RETURN pred.name, property, $baz group, resources, 
+                    size(pages), pages[0..10]
              ORDER BY pred.name, -SIZE(resources), resources
-             LIMIT 10000" \
+             LIMIT 50000" \
     >$stage
-  if [ -s $outfile ]; then
+  if [ x$outfile = x ]; then
+    >&2 echo "Wrote to $stage"
+  elif [ -s $outfile ]; then
     gtail -n +2 $stage >>$outfile
   else
     cp $stage $outfile
@@ -109,17 +125,20 @@ function prop {
 
 function rel {
   clade=$1
-  name=$2
+  # 'group' = clade name
+  group=$2
   relation=$3
   strictness=$4
   outfile=$5
-  >&2 echo "##### rel $name $relation $strictness #####"
+  >&2 echo "##### rel $group $relation $strictness #####"
   if [ $strictness = strict ]; then
     foo="o,"
+    baz="o.name,"
   else
     foo=""
+    baz=""
   fi
-  stage=$TEMPDIR/$name-$relation-$strictness.csv
+  stage=$TEMPDIR/$group-$relation-$strictness.csv
   sleep 1
   time python doc/cypher.py --format csv \
     --server $SERVER --tokenfile $TOKENFILE \
@@ -131,19 +150,22 @@ function rel {
                   COLLECT(DISTINCT r.resource_id) AS resources
              WHERE size(resources) > 1
              WITH '$relation' as relation,
-                  '$name' as group,
+                  '$group' as group,
                   pred, $foo resources, 
-                  COLLECT(DISTINCT p.page_id) AS pages
-             RETURN DISTINCT pred.name, relation, group, resources, pages
+                  COLLECT(p.page_id) AS pages
+             RETURN pred.name, relation, $baz group, resources,
+                    size(pages), pages[0..10]
              ORDER BY pred.name, -SIZE(resources), resources
-             LIMIT 10000" \
+             LIMIT 50000" \
     >$stage
-  if [ -s $outfile ]; then
+  if [ x$outfile = x ]; then
+    >&2 echo "Wrote to $stage"
+  elif [ -s $outfile ]; then
     gtail -n +2 $stage >>$outfile
   else
     cp $stage $outfile
   fi
 }
 
-# main strictness clade
-main $1 $2 
+# main strictness clade property
+main "$1" "$2" "$3"

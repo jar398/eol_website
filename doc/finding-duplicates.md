@@ -45,8 +45,8 @@ property:
     LIMIT 20
 ```
 
-Note that trait records could have the same page, predicate, and value
-and still differ significantly by metadata, which gives qualifying
+Trait records could have the same page, predicate, and value and still
+differ significantly by metadata, which could give qualifying
 conditions such as life stage.  My guess is that this situation is
 rare.
 
