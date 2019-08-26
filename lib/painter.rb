@@ -13,6 +13,8 @@ require 'net/http'
 require 'json'
 require 'cgi'
 
+require_relative 'paginator'
+
 class Painter
 
   @silly_resource = 99999
@@ -49,7 +51,7 @@ class Painter
 
   def initialize(query_fn)
     @query_fn = query_fn
-    @paginator = Paginator(query_fn)
+    @paginator = Paginator.new(query_fn)
     @pagesize = 10000
   end
 
@@ -80,20 +82,17 @@ class Painter
           WITH t, o, toInteger(m.measurement) as ancestor
           MATCH (a:Page {page_id: ancestor})<-[:parent*1..]-(d:Page)
           #{merge}
-          RETURN d.page_id, t.eol_pk, t.measurement, o.name, d.canonical
-          LIMIT #{LIMIT}"
+          RETURN d.page_id, t.eol_pk, t.measurement, o.name, d.canonical"
     STDERR.puts(query)
     assert_path = "assert.csv"
-    r = run_paged_query(query, @pagesize, assert_path)
+    r = run_paged_query(query, @pagesize, assert_path) #adds LIMIT
     return unless r
     #STDERR.puts("Starts query: #{r["data"].size} rows")
 
     # Index inferences to prepare for deletion
     inferences = {}
 
-    # OOPS. NEED TO READ THE BIG CSV FILE...
-
-    r["data"].each do |page, trait, value, ovalue, name|
+    CSV.foreach(r) do |page, trait, value, ovalue, name|
       inferences[[page, trait]] = [name, value, ovalue]
     end
     STDERR.puts("Found #{inferences.size} potential inferences")
@@ -108,17 +107,14 @@ class Painter
           WITH p, t, toInteger(m.measurement) as ancestor
           MATCH (a:Page {page_id: ancestor})<-[:parent*1..]-(d:Page)
           #{delete}
-          RETURN d.page_id, t.eol_pk, ancestor, a.canonical, p.page_id, p.canonical
-          LIMIT #{LIMIT}"
+          RETURN d.page_id, t.eol_pk, ancestor, a.canonical, p.page_id, p.canonical"
     retract_path = "retract.csv"
-    r = run_paged_query(query, @pagesize, retract_path)
+    r = run_paged_query(query, @pagesize, retract_path) #adds LIMIT
     if r
       winners = 0
       losers = 0
       orphans = {}
-      #STDERR.puts("Stops query: #{r["data"].size} rows")
-      # Delete stopped inferences
-      r["data"].each do |page, trait, stop_point, stop_name, org_id, org_name|
+      CSV.foreach(r) do |page, trait, stop_point, stop_name, org_id, org_name|
         if inferences.include?([page, trait])
           winners += 1
         else
@@ -137,13 +133,15 @@ class Painter
       STDERR.puts("Deleting #{winners} inferences, failing to delete #{losers} inferences")
 
       # Now actually delete them
-      r["data"].each do |page, trait, stop_point, stop_name, org_id, org_name|
+      CSV.foreach(r) do |page, trait, stop_point, stop_name, org_id, org_name|
         inferences.delete([page, trait])
       end
+
+      STDERR.puts("Net #{inferences.size}")
     end
 
-    # Write remaining inferences to stdout as CSV
-    CSV($stdout.dup) do |csv|
+    # Write remaining inferences as CSV
+    CSV.open("retain.csv") do |csv|
       csv << ["page", "name", "trait", "value"]
       inferences.each do |key, info|
         (page, trait) = key
@@ -155,10 +153,11 @@ class Painter
     # show(resource)
   end
 
-  # For long-running queries (writes to
+  # For long-running queries (writes to path).  Return value if path
+  # on success, nil on failure.
 
   def run_paged_query(cql, pagesize, path)
-    Paginator(@query_fn).supervise_query(cql, nil, pagesize, path)
+    Paginator.new(@query_fn).supervise_query(cql, nil, pagesize, path)
   end
 
   # For small / debugging queries
