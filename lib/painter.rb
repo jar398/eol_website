@@ -49,6 +49,8 @@ class Painter
 
   def initialize(query_fn)
     @query_fn = query_fn
+    @paginator = Paginator(query_fn)
+    @pagesize = 10000
   end
 
   # Do branch painting based on directives that are already in the graphdb.
@@ -81,19 +83,23 @@ class Painter
           RETURN d.page_id, t.eol_pk, t.measurement, o.name, d.canonical
           LIMIT #{LIMIT}"
     STDERR.puts(query)
-    r = run_query(query)
+    assert_path = "assert.csv"
+    r = run_paged_query(query, @pagesize, assert_path)
     return unless r
     #STDERR.puts("Starts query: #{r["data"].size} rows")
 
     # Index inferences to prepare for deletion
     inferences = {}
+
+    # OOPS. NEED TO READ THE BIG CSV FILE...
+
     r["data"].each do |page, trait, value, ovalue, name|
       inferences[[page, trait]] = [name, value, ovalue]
     end
     STDERR.puts("Found #{inferences.size} potential inferences")
 
     # Erase inferred traits from stop point to descendants.
-    r = run_query(
+    query = 
          "MATCH (r:Resource {resource_id: #{resource}})<-[:supplier]-
                 (t:Trait)-[:metadata]->
                 (m:MetaData)-[:predicate]->
@@ -103,7 +109,9 @@ class Painter
           MATCH (a:Page {page_id: ancestor})<-[:parent*1..]-(d:Page)
           #{delete}
           RETURN d.page_id, t.eol_pk, ancestor, a.canonical, p.page_id, p.canonical
-          LIMIT #{LIMIT}")
+          LIMIT #{LIMIT}"
+    retract_path = "retract.csv"
+    r = run_paged_query(query, @pagesize, retract_path)
     if r
       winners = 0
       losers = 0
@@ -146,6 +154,14 @@ class Painter
 
     # show(resource)
   end
+
+  # For long-running queries (writes to
+
+  def run_paged_query(cql, pagesize, path)
+    Paginator(@query_fn).supervise_query(cql, nil, pagesize, path)
+  end
+
+  # For small / debugging queries
 
   def run_query(cql)
     # TraitBank::query(cql)
