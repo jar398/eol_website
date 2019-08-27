@@ -92,7 +92,7 @@ class Painter
     # Index inferences to prepare for deletion
     inferences = {}
 
-    CSV.foreach(r) do |page, trait, value, ovalue, name|
+    CSV.foreach(r, {encoding:'UTF-8'}) do |page, trait, value, ovalue, name|
       inferences[[page, trait]] = [name, value, ovalue]
     end
     STDERR.puts("Found #{inferences.size} potential inferences")
@@ -114,7 +114,7 @@ class Painter
       winners = 0
       losers = 0
       orphans = {}
-      CSV.foreach(r) do |page, trait, stop_point, stop_name, org_id, org_name|
+      CSV.foreach(r, {encoding:'UTF-8'}) do |page, trait, stop_point, stop_name, org_id, org_name|
         if inferences.include?([page, trait])
           winners += 1
         else
@@ -133,7 +133,7 @@ class Painter
       STDERR.puts("Deleting #{winners} inferences, failing to delete #{losers} inferences")
 
       # Now actually delete them
-      CSV.foreach(r) do |page, trait, stop_point, stop_name, org_id, org_name|
+      CSV.foreach(r, {encoding:'UTF-8'}) do |page, trait, stop_point, stop_name, org_id, org_name|
         inferences.delete([page, trait])
       end
 
@@ -141,7 +141,7 @@ class Painter
     end
 
     # Write remaining inferences as CSV
-    CSV.open("retain.csv") do |csv|
+    CSV.open("retain.csv", "wb:UTF-8") do |csv|
       csv << ["page", "name", "trait", "value"]
       inferences.each do |key, info|
         (page, trait) = key
