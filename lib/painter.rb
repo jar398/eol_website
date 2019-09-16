@@ -68,8 +68,6 @@ class Painter
   end
 
   def paint_or_infer(resource, merge, delete)
-    show_directives(resource)
-
     # Propagate traits from start point to descendants.  Filter by resource.
     # Currently assumes the painted trait has an object_term, but this
     # should be generalized to allow measurement as well
@@ -239,11 +237,17 @@ class Painter
                (p:Page)-[:trait]->(t)
          WITH p, t, toInteger(m.measurement) as point_id
          MATCH (point:Page {page_id: point_id})
-         RETURN point.page_id, point.canonical, t.eol_pk, p.page_id, p.canonical
+         OPTIONAL MATCH (p)-[:parent*0..]->(life:Page {page_id: 2913056})
+         RETURN point.page_id, point.canonical, t.eol_pk, p.page_id, p.canonical, life.page_id
          LIMIT 10000")
     if r
-      STDERR.puts("#{r["data"].size} stop directives")
-      r["data"][0..10].map{|row| STDERR.puts("#{tag} directive: #{row}")} if r
+      STDERR.puts("#{r["data"].size} #{tag} directives")
+      r["data"].each do |row|
+        if row[-1] == nil
+          STDERR.puts("** #{tag} page not in DH: #{row[0]} #{row[1]}")
+        end
+      end
+      r["data"][0..10].map{|row| STDERR.puts("#{tag} directive: #{row}")}
     end
   end
 
