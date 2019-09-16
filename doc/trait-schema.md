@@ -68,7 +68,7 @@ interface, where each taxon known to EOL has its own web page.
 
 * `parent` link (to another `Page` node): taxonomic
   subsumption; the target is [intended to be] the `Page` node for the smallest
-  taxon that has a `Page` node and contains, but is different from, the one
+  taxon in the dynamic hierarchy that contains, but is different from, the one
   for this `Page`.  The `parent` link is unique, if present, and is only absent for
   hierarchy roots.
 * `trait` relationship (to a `Trait` node): the target node gives categorical or
@@ -138,15 +138,17 @@ below into groups.
 
 The 'object' or value of the statement is given by the
 `object_page_id`, `object_term`, `normal_measurement`, or `literal`,
-as determined by the nature of the `predicate`.  Exactly one of of
-these four properties (or links) will be present.
+as determined by the nature of the `predicate`.
 
-* `object_page_id`: if the object of the statement is a taxon, this is the
-  value of the `page_id` property of the `Page` node for the taxon.
+* `object_page_id`: if the predicate has type `association`, the object
+  of the statement is a taxon, and this property is the
+  value of the `page_id` of that taxon.
 * `object_term` link: to a `Term` node for the object of the statement,
   usually an ontology term for some qualitative choice (e.g. habitat type).
+  The predicate's type will be 'measurement' [check on this].
 * `normal_measurement` property: this value is the value of the statement,
   indicating a quantity in normalized units.
+  The predicate's type will be 'measurement' [check on this].
 * `normal_units_term` link: when `normal_measurement` is present, the
   target is a `Term` node (usually
   for an ontology term) that gives the units in which `normal_measurement` is given.
@@ -158,6 +160,8 @@ these four properties (or links) will be present.
   is provided by the resource.
 * `literal` property: a string coming from an uncontrolled vocabulary such as
   is found in certain Darwin Core attributes.
+  (This property seems to be redundant, in that it is the `uri` of the
+  `object_term` when there is one?)
 
 ### Qualifiers
 
