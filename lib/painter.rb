@@ -71,6 +71,7 @@ class Painter
     # Propagate traits from start point to descendants.  Filter by resource.
     # Currently assumes the painted trait has an object_term, but this
     # should be generalized to allow measurement as well
+    base_dir = resource.to_s
     query = 
          "MATCH (r:Resource {resource_id: #{resource}})<-[:supplier]-
                 (t:Trait)-[:metadata]->
@@ -82,7 +83,7 @@ class Painter
           #{merge}
           RETURN d.page_id, t.eol_pk, t.measurement, o.name, d.canonical"
     STDERR.puts(query)
-    assert_path = "assert.csv"
+    assert_path = File.join(base_dir, "assert.csv")
     r = run_paged_query(query, @pagesize, assert_path) #adds LIMIT
     return unless r
     #STDERR.puts("Starts query: #{r["data"].size} rows")
@@ -106,7 +107,7 @@ class Painter
           MATCH (a:Page {page_id: ancestor})<-[:parent*1..]-(d:Page)
           #{delete}
           RETURN d.page_id, t.eol_pk, ancestor, a.canonical, p.page_id, p.canonical"
-    retract_path = "retract.csv"
+    retract_path = File.join(base_dir, "retract.csv")
     r = run_paged_query(query, @pagesize, retract_path) #adds LIMIT
     if r
       winners = 0
@@ -139,8 +140,8 @@ class Painter
     end
 
     # Write remaining inferences as CSV
-    CSV.open("retain.csv", "wb:UTF-8") do |csv|
-      csv << ["page", "name", "trait", "value"]
+    CSV.open(File.join(base_dir, "inferences.csv"), "wb:UTF-8") do |csv|
+      csv << ["page", "name", "trait", "measurement", "object_name"]
       inferences.each do |key, info|
         (page, trait) = key
         (name, value, ovalue) = info

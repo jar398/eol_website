@@ -57,7 +57,7 @@ properties and links of `Trait` nodes.
 A `Page` node is meant to correspond to a taxon for which there is a
 'taxon concept' (published description of some kind).  (By 'taxon' is
 meant the biological grouping that contains organisms or specimens, as
-opposed to its description.)  Of course the correspondence between
+opposed to its description.)  The correspondence between
 Pages and taxa will fail once in a while due to errors in the source
 data, in taxon record matching (the harvester), or in what we believe
 about nature.  These situations are errors and should be fixed when
@@ -66,15 +66,6 @@ detected.
 The use of the word 'page' is a reference to the EOL user
 interface, where each taxon known to EOL has its own web page.
 
-* `parent` link (to another `Page` node): taxonomic
-  subsumption; the target is [intended to be] the `Page` node for the smallest
-  taxon in the dynamic hierarchy that contains, but is different from, the one
-  for this `Page`.  The `parent` link is unique, if present, and is only absent for
-  hierarchy roots.
-* `trait` relationship (to a `Trait` node): the target node gives categorical or
-  quantitative information
-  about the taxon.  Many `Trait`s (or no
-  `Trait`s) can be `trait`-linked from a given `Page`.
 * `page_id` property, a positive integer.
   Every `Page` has a different `page_id` value.  The page id is used as a key in
   the EOL relational databases (or ORM), which contain additional taxon
@@ -88,6 +79,22 @@ interface, where each taxon known to EOL has its own web page.
   be "stale" or missing in rare cases. For the most trustworthy value, it is
   advised to check the EOL page (https://eol.org/pages/PAGE_ID/names).
 
+Relationships:
+
+* `parent` link (to another `Page` node): taxonomic subsumption; the
+  target is [intended to be] the `Page` node for the smallest taxon in
+  the dynamic hierarchy that contains, but is different from, the one
+  for this `Page`.  The `parent` link is unique, if present, and is
+  only absent for the root of the dynamic hierarchy and for Page nodes
+  that don't belong to the dynamic hierarchy.
+* `trait` link (to a `Trait` node): the target node gives categorical or
+  quantitative information
+  about the taxon.  Many `Trait`s (or no
+  `Trait`s) can be `trait`-linked from a given `Page`.
+* `inferred_trait` link: same as `trait`, but the applicability of the
+  `Trait` to the `Page` is inferred and the `Trait` belongs to a different 
+  `Page` (i.e. this `Trait` node has a different `Page` that is 
+  `trait`-related to it).
 
 
 ## Trait
@@ -115,22 +122,30 @@ below into groups.
   that is, each statement obtained from a given resource has a different `resource_pk`
   value.  Always present.  The value originates from a `measurementOrFactID` or
   `associationID` field in the resource DwCA.
-* `supplier` link: links to the Resource node for the resource from which 
-  this statement is drawn.
 * `source` property: Value copied from a DwCA. Meant to describe the original source
   of the `Trait` information (since the resource is itself an aggregator).  
   Free text. Often quite long. Semantics unclear.
+
+Relationships:
+
+* `supplier` link: links to the Resource node for the resource from which 
+  this statement is drawn.
 * `metadata` link: information (statements!) about this statement; see below.
   The node may be `metadata`-linked to any number of `MetaData` nodes.
   A `MetaData` node may be linked from any number of `Trait` nodes.
 
 ### Subject and predicate
 
-* `Page` link source: The subject is indicated by the (unique) `Page` node
-  that `trait`-links to this `Trait` node.  Always present and unique.
 * `scientific_name` property: the name that the resource provided for the
-  subject taxon; not necessarily the same as EOL's name for the taxon (which is the name
-  associated in the RDB with the `page_id` for the subject's `Page`).
+  subject taxon; not necessarily the same as the `canonical` property or
+  EOL's name for the taxon 
+  (which is the name associated in the RDB with the `page_id` for the 
+  subject's `Page`). 
+
+Relationships:
+
+* a `Trait` node is the target of `trait` or `inferred_trait` link,
+  see above.  Each `Trait` node is `trait` related to exactly one `Page`.
 * `predicate` link: links to a `Term` node, usually one for an ontology
   term; see below for `Term`.  Always present.
 
@@ -179,6 +194,12 @@ information.
 * `sex_term` link
 * `lifestage_term` link
 
+Sometimes (always?) these qualifying properties and links are
+redundant with `MetaData` nodes for this `Trait` node.  E.g. it
+appears that if there is a `sex_term` link then there is also a
+`MetaData` node that has a `sex` property.  Similarly for
+`lifestage_term` and the `life stage` MetaData property.
+
 ## Metadata
 
 A `MetaData` node expresses something we know or believe, either
@@ -205,8 +226,8 @@ are written as URLs (URIs) and the origin provides them with a name,
 description, and other information such as type and subsumption
 relationships.
 
-Terms live in neo4j (copied from harvesting db) and *not* in the web
-site RDB.
+Terms are copied from EOL harvesting database to the graph database.
+They are *not* used in EOL's relational publishing database.
 
 * `uri` property:    always present - the standard URI (URL) for this property
 * `name` property:   an English word or phrase, chosen by EOL curators, but
