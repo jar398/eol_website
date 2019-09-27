@@ -58,20 +58,21 @@ class Painter
   # Do branch painting based on directives that are already in the graphdb.
 
   def infer(resource)
-    paint_or_infer(resource, "", "")
+    paint_or_infer(resource, "", "", "infer-")
   end
 
   def paint(resource)
     paint_or_infer(resource,
-                   "MERGE (q)-[:inferred_trait]->(t)",
-                   ", (q)-[i:inferred_trait]->(t) DELETE i")
+                   "MERGE (d)-[:inferred_trait]->(t)",
+                   ", (d)-[i:inferred_trait]->(t) DELETE i",
+                   "paint-")
   end
 
-  def paint_or_infer(resource, merge, delete)
+  def paint_or_infer(resource, merge, delete, prefix)
     # Propagate traits from start point to descendants.  Filter by resource.
     # Currently assumes the painted trait has an object_term, but this
     # should be generalized to allow measurement as well
-    base_dir = resource.to_s
+    base_dir = "#{prefix}#{resource.to_s}"
     query = 
          "MATCH (r:Resource {resource_id: #{resource}})<-[:supplier]-
                 (t:Trait)-[:metadata]->
