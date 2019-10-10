@@ -42,7 +42,7 @@ class Painter
     # Command dispatch
     case command
     when "directives" then
-      show_directives(resource)
+      painter.show_directives(resource)
     when "qc" then
       painter.qc(resource)
     when "infer" then    # list the inferences
@@ -199,71 +199,82 @@ class Painter
     # should be generalized to allow measurement as well
     base_dir = resource.to_s
     query = 
-         "MATCH (r:Resource {resource_id: #{resource}})<-[:supplier]-
+         "MATCH (:Resource {resource_id: #{resource}})<-[:supplier]-
                 (t:Trait)-[:metadata]->
                 (m:MetaData)-[:predicate]->
                 (:Term {uri: '#{START_TERM}'})
           OPTIONAL MATCH (t)-[:object_term]->(o:Term)
-          WITH t, o, toInteger(m.measurement) as ancestor
-          MATCH (a:Page {page_id: ancestor})<-[:parent*1..]-(d:Page)
+          WITH t, toInteger(m.measurement) as start_id, o
+          MATCH (:Page {page_id: start_id})<-[:parent*1..]-(d:Page)
           #{merge}
-          RETURN d.page_id, t.eol_pk, t.measurement, o.name, d.canonical"
+          RETURN d.page_id AS page, d.canonical, t.eol_pk, t.measurement, o.name"
     STDERR.puts(query)
     assert_path = File.join(base_dir, "assert.csv")
     results_path = run_paged_query(query, @pagesize, assert_path) #adds LIMIT
     return unless results_path
-    #STDERR.puts("Starts query: #{r["data"].size} rows")
 
     # Index inferences to prepare for deletion
     inferences = {}
 
-    CSV.foreach(results_path, {encoding:'UTF-8'}) do |page, trait, value, ovalue, name|
-      inferences[[page, trait]] = [name, value, ovalue]
+    duplicates = []
+    CSV.foreach(results_path, {encoding:'UTF-8'}) do |page, name, trait, value, ovalue|
+      next if page == "page"    # gross
+      if inferences.include?([page, trait])
+        duplicates[[page, trait]] = true
+      else
+        inferences[[page, trait]] = [name, value, ovalue]
+      end
     end
-    STDERR.puts("Found #{inferences.size} potential inferences")
+    STDERR.puts("Found #{inferences.size} proper start-point descendants")
+    if duplicates.size > 0
+      STDERR.puts("Found #{duplicates.size} duplicate start-point descendants:")
+      duplicates.each do |key|
+        (page, trait) = key
+        STDERR.puts("#{page},#{trait}")
+      end
+    end
 
     # Erase inferred traits from stop point to descendants.
     query = 
-         "MATCH (r:Resource {resource_id: #{resource}})<-[:supplier]-
+         "MATCH (:Resource {resource_id: #{resource}})<-[:supplier]-
                 (t:Trait)-[:metadata]->
                 (m:MetaData)-[:predicate]->
-                (:Term {uri: '#{STOP_TERM}'}),
-                (p:Page)-[:trait]->(t)
-          WITH p, t, toInteger(m.measurement) as ancestor
-          MATCH (a:Page {page_id: ancestor})<-[:parent*0..]-(d:Page)
+                (:Term {uri: '#{STOP_TERM}'})
+          WITH t, toInteger(m.measurement) as stop_id
+          MATCH (stop:Page {page_id: stop_id})<-[:parent*0..]-(d:Page)
           #{delete}
-          RETURN d.page_id, t.eol_pk, ancestor, a.canonical, p.page_id, p.canonical"
+          RETURN d.page_id AS page, t.eol_pk AS trait"
     retract_path = File.join(base_dir, "retract.csv")
     results_path = run_paged_query(query, @pagesize, retract_path) #adds LIMIT
-    if results_path
-      winners = 0
-      losers = 0
-      orphans = {}
-      CSV.foreach(results_path, {encoding:'UTF-8'}) do |page, trait, stop_point, stop_name, org_id, org_name|
-        if inferences.include?([page, trait])
-          winners += 1
-        else
-          losers += 1
-          orphans[stop_point] = [stop_name, org_id, org_name]
-        end
-      end
-      # Show the orphans
-      if orphans.size > 0
-        STDERR.puts("#{orphans.size} pages under stop points are not under start points:")
-        orphans.each do |stop_point, info|
-          (stop_name, org_id, org_name) = info
-          STDERR.puts("#{stop_point},#{stop_name},#{org_id},#{org_name}")
-        end
-      end
-      STDERR.puts("Deleting #{winners} inferences, failing to delete #{losers} inferences")
 
-      # Now actually delete them
-      CSV.foreach(results_path, {encoding:'UTF-8'}) do |page, trait, stop_point, stop_name, org_id, org_name|
-        inferences.delete([page, trait])
+    # Find orphans (stopped inferences that are not under any start page) and
+    # report on them.  An extra QC check
+    stopped = 0
+    orphans = []
+    CSV.foreach(results_path, {encoding:'UTF-8'}) do |page, trait|
+      next if page == "page"    # gross
+      stopped += 1
+      if not inferences.include?([page, trait])
+        orphans << [page, trait]
       end
-
-      STDERR.puts("Net #{inferences.size}")
     end
+    STDERR.puts("Found #{stopped} improper stop-point descendants")
+
+    if orphans.size > 0
+      STDERR.puts("#{orphans.size} pages under stop points are not under start points:")
+      orphans.each do |key|
+        (page, trait) = key
+        STDERR.puts("page #{page}, trait #{trait}")
+      end
+    end
+
+    # Now actually retract the stopped inferences
+    CSV.foreach(results_path, {encoding:'UTF-8'}) do |page, trait|
+      next if page == "page"    # gross
+      inferences.delete([page, trait])
+    end
+
+    STDERR.puts("Net: #{inferences.size} inferences")
 
     # Write remaining inferences as CSV
     path = File.join(base_dir, "inferences.csv")

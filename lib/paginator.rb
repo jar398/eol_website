@@ -51,20 +51,23 @@ class Paginator
 
   def supervise_query(query, headings, pagesize, path)
     if File.exist?(path)
-      #STDERR.puts "reusing previously created #{path}"
+      STDERR.puts "Using cached file #{path}"
       path
     else
       # Create a directory path.parts to hold the pages
       pages_dir = path + ".parts"
+      if Dir.exist?(pages_dir) && Dir.entries(pages_dir).length > 2
+        STDERR.puts "There are cached results in #{pages_dir}"
+      end
       begin
         pages, count = get_query_pages(query, headings, pagesize, pages_dir)
+        if count > 0
+          STDERR.puts("#{File.basename(path)}: #{pages.length} pages, #{count} records")
+        end
         # This always writes a .csv file to path, even if it's empty.
         assemble_pages(pages, path)
         if Dir.exist?(pages_dir) && Dir.entries(pages_dir).length <= 2 # . and ..
           FileUtils.rmdir pages_dir
-        end
-        if count > 0
-          STDERR.puts("#{File.basename(path)}: #{pages.length} pages, #{count} records")
         end
         path
       rescue => e
