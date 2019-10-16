@@ -181,44 +181,25 @@ class Painter
     end
   end
 
-  # Do branch painting based on directives that are already in the graphdb.
+  # Dry run - find all inferences that would be made by branch
+  # painting, and put them in a file for review
 
   def infer(resource)
-    paint_or_infer(resource, "", "", "infer-")
-  end
+    base_dir = "infer-#{resource.to_s}"
 
-  def paint(resource)
-    paint_or_infer(resource,
-                   "MERGE (d)-[:inferred_trait]->(t)",
-                   ", (d)-[i:inferred_trait]->(t) DELETE i",
-                   "paint-")
-  end
+    # Run the two queries
+    (assert_path, retract_path) =
+      paint_or_infer(resource,
+                     "RETURN d.page_id AS page, t.eol_pk AS trait, d.canonical, t.measurement, o.name",
+                     "RETURN d.page_id AS page, t.eol_pk AS trait",
+                    base_dir, @pagesize, @pagesize)
 
-  def paint_or_infer(resource, merge, delete, prefix)
-    # Propagate traits from start point to descendants.  Filter by resource.
-    # Currently assumes the painted trait has an object_term, but this
-    # should be generalized to allow measurement as well
-    base_dir = "#{prefix}#{resource.to_s}"
-    query = 
-         "MATCH (:Resource {resource_id: #{resource}})<-[:supplier]-
-                (t:Trait)-[:metadata]->
-                (m:MetaData)-[:predicate]->
-                (:Term {uri: '#{START_TERM}'})
-          OPTIONAL MATCH (t)-[:object_term]->(o:Term)
-          WITH t, toInteger(m.measurement) as start_id, o
-          MATCH (:Page {page_id: start_id})<-[:parent*1..]-(d:Page)
-          #{merge}
-          RETURN d.page_id AS page, d.canonical, t.eol_pk, t.measurement, o.name"
-    STDERR.puts(query)
-    assert_path = File.join(base_dir, "assert.csv")
-    results_path = run_paged_query(query, @pagesize, assert_path) #adds LIMIT
-    return unless results_path
+    # We'll start by filling the inferences list with the assertions
+    # (start point descendants), then remove the retractions
 
-    # Index inferences to prepare for deletion
     inferences = {}
-
     duplicates = []
-    CSV.foreach(results_path, {encoding:'UTF-8'}) do |page, name, trait, value, ovalue|
+    CSV.foreach(assert_path, {encoding:'UTF-8'}) do |page, trait, name, value, ovalue|
       next if page == "page"    # gross
       if inferences.include?([page, trait])
         duplicates[[page, trait]] = true
@@ -235,49 +216,14 @@ class Painter
       end
     end
 
-    # Erase inferred traits from stop point to descendants.
-    query = 
-         "MATCH (:Resource {resource_id: #{resource}})<-[:supplier]-
-                (t:Trait)-[:metadata]->
-                (m:MetaData)-[:predicate]->
-                (:Term {uri: '#{STOP_TERM}'})
-          WITH t, toInteger(m.measurement) as stop_id
-          MATCH (stop:Page {page_id: stop_id})<-[:parent*0..]-(d:Page)
-          #{delete}
-          RETURN d.page_id AS page, t.eol_pk AS trait"
-    retract_path = File.join(base_dir, "retract.csv")
-    results_path = run_paged_query(query, @pagesize, retract_path) #adds LIMIT
-
-    # Find orphans (stopped inferences that are not under any start page) and
-    # report on them.  An extra QC check
-    stopped = 0
-    orphans = []
-    CSV.foreach(results_path, {encoding:'UTF-8'}) do |page, trait|
-      next if page == "page"    # gross
-      stopped += 1
-      if not inferences.include?([page, trait])
-        orphans << [page, trait]
-      end
-    end
-    STDERR.puts("Found #{stopped} improper stop-point descendants")
-
-    if orphans.size > 0
-      STDERR.puts("#{orphans.size} pages under stop points are not under start points:")
-      orphans.each do |key|
-        (page, trait) = key
-        STDERR.puts("page #{page}, trait #{trait}")
-      end
-    end
-
-    # Now actually retract the stopped inferences
-    CSV.foreach(results_path, {encoding:'UTF-8'}) do |page, trait|
+    # Now retract the retractions (stopped inferences)
+    CSV.foreach(retract_path, {encoding:'UTF-8'}) do |page, trait|
       next if page == "page"    # gross
       inferences.delete([page, trait])
     end
 
+    # Write net inferences as CSV
     STDERR.puts("Net: #{inferences.size} inferences")
-
-    # Write remaining inferences as CSV
     path = File.join(base_dir, "inferences.csv")
     STDERR.puts("Writing #{path}")
     CSV.open(path, "wb:UTF-8") do |csv|
@@ -289,7 +235,60 @@ class Painter
       end
     end
 
-    # show(resource)
+  end
+
+  # Do branch painting
+  # Probably a good idea to precede this with `rm -r paint-{resource}`
+
+  def paint(resource)
+    base_dir = "paint-#{resource.to_s}"
+    paint_or_infer(resource,
+                   "MERGE (d)-[:inferred_trait]->(t)
+                    RETURN COUNT(*)",
+                   "DELETE i 
+                    RETURN COUNT(*)",
+                   # Don't page the deletion!!!
+                   base_dir, @pagesize, 500000)
+    # Now, at this point, we *could* read the counts out of the files,
+    # but if we had wanted that information we could have said "infer"
+    # instead of "paint".
+  end
+
+  # Run the two cypher commands (RETURN for "infer" operation; MERGE
+  # and DELETE for "paint")
+
+  def paint_or_infer(resource, merge, delete, base_dir, ps1, ps2)
+    # Propagate traits from start point to descendants.  Filter by resource.
+    # Currently assumes the painted trait has an object_term, but this
+    # should be generalized to allow measurement as well
+    query =
+         "MATCH (:Resource {resource_id: #{resource}})<-[:supplier]-
+                (t:Trait)-[:metadata]->
+                (m:MetaData)-[:predicate]->
+                (:Term {uri: '#{START_TERM}'})
+          OPTIONAL MATCH (t)-[:object_term]->(o:Term)
+          WITH t, toInteger(m.measurement) as start_id, o
+          MATCH (:Page {page_id: start_id})<-[:parent*1..]-(d:Page)
+          #{merge}"
+    STDERR.puts(query)
+    assert_path = 
+      run_paged_query(query, ps1, File.join(base_dir, "assert.csv"))
+    return unless assert_path
+
+    # Erase inferred traits from stop point to descendants.
+    query = 
+         "MATCH (:Resource {resource_id: #{resource}})<-[:supplier]-
+                (t:Trait)-[:metadata]->
+                (m:MetaData)-[:predicate]->
+                (:Term {uri: '#{STOP_TERM}'})
+          WITH t, toInteger(m.measurement) as stop_id
+          MATCH (stop:Page {page_id: stop_id})<-[:parent*0..]-(d:Page)
+          MATCH (d)-[i:inferred_trait]->(t)
+          #{delete}"
+    STDERR.puts(query)
+    retract_path =
+      run_paged_query(query, ps2, File.join(base_dir, "retract.csv"))
+    [assert_path, retract_path]
   end
 
   # For long-running queries (writes to path).  Return value if path
