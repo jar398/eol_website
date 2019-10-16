@@ -51,20 +51,23 @@ class Paginator
 
   def supervise_query(query, headings, pagesize, path)
     if File.exist?(path)
-      #STDERR.puts "reusing previously created #{path}"
+      STDERR.puts "Using cached file #{path}"
       path
     else
       # Create a directory path.parts to hold the pages
       pages_dir = path + ".parts"
+      if Dir.exist?(pages_dir) && Dir.entries(pages_dir).length > 2
+        STDERR.puts "There are cached results in #{pages_dir}"
+      end
       begin
         pages, count = get_query_pages(query, headings, pagesize, pages_dir)
+        if count > 0
+          STDERR.puts("#{File.basename(path)}: #{pages.length} pages, #{count} records")
+        end
         # This always writes a .csv file to path, even if it's empty.
         assemble_pages(pages, path)
         if Dir.exist?(pages_dir) && Dir.entries(pages_dir).length <= 2 # . and ..
           FileUtils.rmdir pages_dir
-        end
-        if count > 0
-          STDERR.puts("#{File.basename(path)}: #{pages.length} pages, #{count} records")
         end
         path
       rescue => e
@@ -103,16 +106,15 @@ class Paginator
       else
         result = run_query(query + " SKIP #{skip} LIMIT #{limit}")
         got = result["data"].length
-        if result
-          # The skip == 0 test is a kludge that fixes a bug where the
-          # header row was being omitted in some cases
-          if got > 0 || skip == 0
-            emit_csv(result, headings, part_path)
-            pages.push(part_path)
-          else
-            FileUtils.mkdir_p File.dirname(part_path)
-            FileUtils.touch(part_path)
-          end
+        # The skip == 0 test is a kludge that fixes a bug where the
+        # header row was being omitted in some cases
+        STDERR.puts(result) if got == 0
+        if got > 0 || skip == 0
+          emit_csv(result, headings, part_path)
+          pages.push(part_path)
+        else
+          FileUtils.mkdir_p File.dirname(part_path)
+          FileUtils.touch(part_path)
         end
         skip += got
         break if pagesize && got < pagesize

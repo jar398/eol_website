@@ -39,11 +39,20 @@ class Painter
       resource = @silly_resource
     end
 
+    # Command dispatch
     case command
+    when "directives" then
+      painter.show_directives(resource)
+    when "qc" then
+      painter.qc(resource)
     when "infer" then    # list the inferences
       painter.infer(resource)
     when "paint" then    # assert the inferences
       painter.paint(resource)
+    when "count" then    # remove the inferences
+      painter.count(resource)
+    when "clean" then    # remove the inferences
+      painter.clean(resource)
     else
       painter.debug(command, resource)
     end
@@ -53,6 +62,123 @@ class Painter
     @query_fn = query_fn
     @paginator = Paginator.new(query_fn)
     @pagesize = 10000
+  end
+
+  # List all of a resource's start and stop directives
+  # Use sort -k 1 -t , to mix them up
+
+  def show_directives(resource)
+    puts("trait,which,page_id,canonical")
+    show_stxx_directives(resource, START_TERM, "Start")
+    show_stxx_directives(resource, STOP_TERM, "Stop")
+  end
+
+  def show_stxx_directives(resource, uri, tag)
+    r = run_query(
+        "WITH '#{tag}' AS tag
+         MATCH (r:Resource {resource_id: #{resource}})<-[:supplier]-
+               (t:Trait)-[:metadata]->
+               (m:MetaData)-[:predicate]->
+               (:Term {uri: '#{uri}'}),
+               (p:Page)-[:trait]->(t)
+         WITH p, t, toInteger(m.measurement) as point_id, tag
+         MATCH (point:Page {page_id: point_id})
+         OPTIONAL MATCH (point)-[:parent]->(parent:Page)
+         RETURN t.eol_pk, tag, point_id, point.canonical, parent.page_id
+         ORDER BY t.eol_pk, point_id
+         LIMIT 10000")
+    if r
+      STDERR.puts("#{r["data"].size} #{tag} directives")
+      r["data"].each do |trait, tag, id, canonical, parent_id|
+        puts("#{trait},#{tag},#{id},#{canonical},#{parent_id}")
+      end
+    end
+  end
+
+  # Remove all of a resource's inferred trait assertions
+
+  def clean(resource)
+    r = run_query("MATCH (:Resource {resource_id: #{resource}})<-[:supplier]-
+                         (:Trait)<-[r:inferred_trait]-
+                         (:Page)
+                   DELETE r
+                   RETURN COUNT(*)
+                   LIMIT 10")
+    if r
+      STDERR.puts(r["data"][0])
+    end
+  end
+
+  # Display count of a resource's inferred trait assertions
+
+  def count(resource)
+    r = run_query("MATCH (:Resource {resource_id: #{resource}})<-[:supplier]-
+                         (:Trait)<-[r:inferred_trait]-
+                         (:Page)
+                   RETURN COUNT(*)
+                   LIMIT 10")
+    if r
+      STDERR.puts(r["data"][0])
+    end
+  end
+
+  # Quality control - for each trait, check its start and stop
+  # directives to make sure their pages exist and are in the DH
+  # (i.e. have parents), and every stop is under some start
+
+  def qc(resource)
+    qc_presence(resource, START_TERM, "start")
+    qc_presence(resource, STOP_TERM, "stop")
+
+    # Make sure every stop point is under some start point
+    r = run_query("MATCH (r:Resource {resource_id: #{resource}})<-[:supplier]-
+                         (t:Trait)-[:metadata]->
+                         (m2:MetaData)-[:predicate]->
+                         (:Term {uri: '#{STOP_TERM}'})
+                   OPTIONAL MATCH 
+                         (t)-[:metadata]->
+                         (m1:MetaData)-[:predicate]->
+                         (:Term {uri: '#{START_TERM}'})
+                   WITH toInteger(m2.measurement) AS stop_id,
+                        toInteger(m1.measurement) AS start_id,
+                        t
+                   MATCH (stop:Page {page_id: stop_id})
+                   MATCH (start:Page {page_id: start_id})
+                   OPTIONAL MATCH (stop)-[z:parent*1..]->(start)
+                   WITH stop_id, stop, t
+                   WHERE z IS NULL
+                   RETURN stop_id, stop.canonical, t.eol_pk
+                   ORDER BY stop.page_id, stop_id
+                   LIMIT 1000")
+    if r
+      r["data"].each do |id, canonical, trait|
+        STDERR.puts("Stop page #{id} = #{canonical} not under any start page for #{trait}")
+      end
+    end
+  end
+
+  def qc_presence(resource, term, which)
+    r = run_query("MATCH (:Resource {resource_id: 635})<-[:supplier]-
+                         (:Trait)-[:metadata]->
+                         (m:MetaData)-[:predicate]->
+                         (:Term {uri: '#{term}'})
+                   WITH DISTINCT toInteger(m.measurement) AS point_id
+                   OPTIONAL MATCH (point:Page {page_id: point_id})
+                   OPTIONAL MATCH (point)-[:parent]->(parent:Page)
+                   WITH point_id, point, parent
+                   WHERE parent IS NULL
+                   RETURN point_id, point.page_id, point.canonical
+                   ORDER BY point.page_id, point_id
+                   LIMIT 1000")
+    if r
+      r["data"].each do |id, found, canonical|
+        if found
+          STDERR.puts("#{which} point #{id} = #{canonical} has no parent (is not in DH)")
+        else
+          STDERR.puts("Missing #{which} point #{id}")
+        end
+      end
+    end
   end
 
   # Do branch painting based on directives that are already in the graphdb.
@@ -74,74 +200,87 @@ class Painter
     # should be generalized to allow measurement as well
     base_dir = "#{prefix}#{resource.to_s}"
     query = 
-         "MATCH (r:Resource {resource_id: #{resource}})<-[:supplier]-
+         "MATCH (:Resource {resource_id: #{resource}})<-[:supplier]-
                 (t:Trait)-[:metadata]->
                 (m:MetaData)-[:predicate]->
-                (:Term {uri: '#{START_TERM}'}),
-                (t)-[:object_term]->(o:Term)
-          WITH t, o, toInteger(m.measurement) as ancestor
-          MATCH (a:Page {page_id: ancestor})<-[:parent*1..]-(d:Page)
+                (:Term {uri: '#{START_TERM}'})
+          OPTIONAL MATCH (t)-[:object_term]->(o:Term)
+          WITH t, toInteger(m.measurement) as start_id, o
+          MATCH (:Page {page_id: start_id})<-[:parent*1..]-(d:Page)
           #{merge}
-          RETURN d.page_id, t.eol_pk, t.measurement, o.name, d.canonical"
+          RETURN d.page_id AS page, d.canonical, t.eol_pk, t.measurement, o.name"
     STDERR.puts(query)
     assert_path = File.join(base_dir, "assert.csv")
-    r = run_paged_query(query, @pagesize, assert_path) #adds LIMIT
-    return unless r
-    #STDERR.puts("Starts query: #{r["data"].size} rows")
+    results_path = run_paged_query(query, @pagesize, assert_path) #adds LIMIT
+    return unless results_path
 
     # Index inferences to prepare for deletion
     inferences = {}
 
-    CSV.foreach(r, {encoding:'UTF-8'}) do |page, trait, value, ovalue, name|
-      inferences[[page, trait]] = [name, value, ovalue]
+    duplicates = []
+    CSV.foreach(results_path, {encoding:'UTF-8'}) do |page, name, trait, value, ovalue|
+      next if page == "page"    # gross
+      if inferences.include?([page, trait])
+        duplicates[[page, trait]] = true
+      else
+        inferences[[page, trait]] = [name, value, ovalue]
+      end
     end
-    STDERR.puts("Found #{inferences.size} potential inferences")
+    STDERR.puts("Found #{inferences.size} proper start-point descendants")
+    if duplicates.size > 0
+      STDERR.puts("Found #{duplicates.size} duplicate start-point descendants:")
+      duplicates.each do |key|
+        (page, trait) = key
+        STDERR.puts("#{page},#{trait}")
+      end
+    end
 
     # Erase inferred traits from stop point to descendants.
     query = 
-         "MATCH (r:Resource {resource_id: #{resource}})<-[:supplier]-
+         "MATCH (:Resource {resource_id: #{resource}})<-[:supplier]-
                 (t:Trait)-[:metadata]->
                 (m:MetaData)-[:predicate]->
-                (:Term {uri: '#{STOP_TERM}'}),
-                (p:Page)-[:trait]->(t)
-          WITH p, t, toInteger(m.measurement) as ancestor
-          MATCH (a:Page {page_id: ancestor})<-[:parent*1..]-(d:Page)
+                (:Term {uri: '#{STOP_TERM}'})
+          WITH t, toInteger(m.measurement) as stop_id
+          MATCH (stop:Page {page_id: stop_id})<-[:parent*0..]-(d:Page)
           #{delete}
-          RETURN d.page_id, t.eol_pk, ancestor, a.canonical, p.page_id, p.canonical"
+          RETURN d.page_id AS page, t.eol_pk AS trait"
     retract_path = File.join(base_dir, "retract.csv")
-    r = run_paged_query(query, @pagesize, retract_path) #adds LIMIT
-    if r
-      winners = 0
-      losers = 0
-      orphans = {}
-      CSV.foreach(r, {encoding:'UTF-8'}) do |page, trait, stop_point, stop_name, org_id, org_name|
-        if inferences.include?([page, trait])
-          winners += 1
-        else
-          losers += 1
-          orphans[stop_point] = [stop_name, org_id, org_name]
-        end
-      end
-      # Show the orphans
-      if orphans.size > 0
-        STDERR.puts("#{orphans.size} painted pages under stop points are not under start points:")
-        orphans.each do |stop_point, info|
-          (stop_name, org_id, org_name) = info
-          STDERR.puts("#{stop_point},#{stop_name},#{org_id},#{org_name}")
-        end
-      end
-      STDERR.puts("Deleting #{winners} inferences, failing to delete #{losers} inferences")
+    results_path = run_paged_query(query, @pagesize, retract_path) #adds LIMIT
 
-      # Now actually delete them
-      CSV.foreach(r, {encoding:'UTF-8'}) do |page, trait, stop_point, stop_name, org_id, org_name|
-        inferences.delete([page, trait])
+    # Find orphans (stopped inferences that are not under any start page) and
+    # report on them.  An extra QC check
+    stopped = 0
+    orphans = []
+    CSV.foreach(results_path, {encoding:'UTF-8'}) do |page, trait|
+      next if page == "page"    # gross
+      stopped += 1
+      if not inferences.include?([page, trait])
+        orphans << [page, trait]
       end
+    end
+    STDERR.puts("Found #{stopped} improper stop-point descendants")
 
-      STDERR.puts("Net #{inferences.size}")
+    if orphans.size > 0
+      STDERR.puts("#{orphans.size} pages under stop points are not under start points:")
+      orphans.each do |key|
+        (page, trait) = key
+        STDERR.puts("page #{page}, trait #{trait}")
+      end
     end
 
+    # Now actually retract the stopped inferences
+    CSV.foreach(results_path, {encoding:'UTF-8'}) do |page, trait|
+      next if page == "page"    # gross
+      inferences.delete([page, trait])
+    end
+
+    STDERR.puts("Net: #{inferences.size} inferences")
+
     # Write remaining inferences as CSV
-    CSV.open(File.join(base_dir, "inferences.csv"), "wb:UTF-8") do |csv|
+    path = File.join(base_dir, "inferences.csv")
+    STDERR.puts("Writing #{path}")
+    CSV.open(path, "wb:UTF-8") do |csv|
       csv << ["page", "name", "trait", "measurement", "object_name"]
       inferences.each do |key, info|
         (page, trait) = key
@@ -208,8 +347,6 @@ class Painter
       load_directives(filename, resource)
     when "show" then
       show(resource)
-    when "directives" then
-      show_directives(resource)
     when "flush" then
       flush(resource)
     else
@@ -222,34 +359,6 @@ class Painter
       ENV["DIRECTIVES"]
     else
       @silly_file
-    end
-  end
-
-  def show_directives(resource)
-    show_stxx_directives(resource, START_TERM, "Start")
-    show_stxx_directives(resource, STOP_TERM, "Stop")
-  end
-
-  def show_stxx_directives(resource, uri, tag)
-    r = run_query(
-        "MATCH (r:Resource {resource_id: #{resource}})<-[:supplier]-
-               (t:Trait)-[:metadata]->
-               (m:MetaData)-[:predicate]->
-               (:Term {uri: '#{uri}'}),
-               (p:Page)-[:trait]->(t)
-         WITH p, t, toInteger(m.measurement) as point_id
-         MATCH (point:Page {page_id: point_id})
-         OPTIONAL MATCH (p)-[:parent*0..]->(life:Page {page_id: 2913056})
-         RETURN point.page_id, point.canonical, t.eol_pk, p.page_id, p.canonical, life.page_id
-         LIMIT 10000")
-    if r
-      STDERR.puts("#{r["data"].size} #{tag} directives")
-      r["data"].each do |row|
-        if row[-1] == nil
-          STDERR.puts("** #{tag} page not in DH: #{row[0]} #{row[1]}")
-        end
-      end
-      r["data"][0..10].map{|row| STDERR.puts("#{tag} directive: #{row}")}
     end
   end
 
