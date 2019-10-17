@@ -7,6 +7,7 @@
 # to reduce noise emitted to console.
 
 require 'csv'
+require 'open3'
 
 # These are required if we want to be an HTTP client:
 require 'net/http'
@@ -49,6 +50,8 @@ class Painter
       painter.infer(resource)
     when "paint" then    # assert the inferences
       painter.paint(resource)
+    when "paintb" then    # assert the inferences
+      painter.paintb(resource)
     when "count" then    # remove the inferences
       painter.count(resource)
     when "clean" then    # remove the inferences
@@ -192,7 +195,7 @@ class Painter
       paint_or_infer(resource,
                      "RETURN d.page_id AS page, t.eol_pk AS trait, d.canonical, t.measurement, o.name",
                      "RETURN d.page_id AS page, t.eol_pk AS trait",
-                    base_dir, @pagesize, @pagesize)
+                    base_dir, true)
 
     # We'll start by filling the inferences list with the assertions
     # (start point descendants), then remove the retractions
@@ -217,16 +220,25 @@ class Painter
     end
 
     # Now retract the retractions (stopped inferences)
-    CSV.foreach(retract_path, {encoding:'UTF-8'}) do |page, trait|
-      next if page == "page"    # gross
-      inferences.delete([page, trait])
+    if retract_path
+      removed = 0
+      CSV.foreach(retract_path, {encoding:'UTF-8'}) do |page, trait|
+        next if page == "page"    # gross
+        inferences.delete([page, trait])
+        removed += 1
+      end
+      STDERR.puts("Removed #{removed} stop-point descendants")
+    else
+      STDERR.puts("No stop-point descendants to remove")
     end
+
+    net_path = File.join(base_dir, "inferences.csv")
+    explode(inferences, net_path)
 
     # Write net inferences as CSV
     STDERR.puts("Net: #{inferences.size} inferences")
-    path = File.join(base_dir, "inferences.csv")
-    STDERR.puts("Writing #{path}")
-    CSV.open(path, "wb:UTF-8") do |csv|
+    CSV.open(net_path, "wb:UTF-8") do |csv|
+      STDERR.puts("Writing #{net_path}")
       csv << ["page", "name", "trait", "measurement", "object_name"]
       inferences.each do |key, info|
         (page, trait) = key
@@ -237,6 +249,65 @@ class Painter
 
   end
 
+  def explode(inferences, net_path)
+    a = inferences.to_a
+    number_of_pages = a.size / @pagesize + 1
+    dir_path = net_path + ".parts"
+    FileUtils.mkdir_p dir_path
+    (0...number_of_pages).each do |page|
+      n = page * @pagesize
+      page_path = File.join(dir_path, "#{n}_#{@pagesize}.csv")
+      CSV.open(page_path, "wb:UTF-8") do |csv|
+        STDERR.puts("Writing #{page_path}")
+        csv << ["page", "name", "trait", "measurement", "object_name"]
+        a[n...n+@pagesize].each do |key, info|
+          (page, trait) = key
+          (name, value, ovalue) = info
+          csv << [page, name, trait, value, ovalue]
+        end
+      end
+    end
+  end
+
+  # Need to know:
+  #  1. The way to refer to the server directory using scp
+  #  2. The way to refer to the server directory using http
+
+  def paintb(resource)
+    server_base_url = "http://varela.csail.mit.edu/~jar/tmp/"
+    server_base_scp = "varela:public_html/tmp/"
+
+    base_dir = "infer-#{resource.to_s}"
+    net_path = File.join(base_dir, "inferences.csv")
+    parts_path = net_path + ".parts"
+    d = Dir.new(parts_path)
+    d.each do |name|
+      next unless name.end_with? ".csv"
+      long_name = "#{base_dir}=#{name}"
+      page_path = File.join(parts_path, name)    # local
+      # don't bother creating a directory on the server, too lazy to figure out
+      scp_target = "#{server_base_scp}#{long_name}"
+      url = "#{server_base_url}#{long_name}"    #no need to escape
+      # Need to move this file to some server so EOL can access it.
+      STDERR.puts("Copying #{page_path} to #{scp_target}")
+      stdout_string, status = Open3.capture2("rsync -p #{page_path} #{scp_target}")
+      query = "LOAD CSV WITH HEADERS FROM '#{url}'
+               AS row
+               MATCH (page:Page {page_id: toInteger(row.page)})
+               MATCH (trait:Trait {eol_pk: row.trait})
+               MERGE (page)-[i:inferred_trait]->(trait)
+               RETURN COUNT(i) 
+               LIMIT 1"
+      r = run_query(query)
+      if r
+        count = r["data"][0]
+      else
+        count = 0
+      end
+      STDERR.puts("Merged #{count} relations from #{url}")
+    end
+  end
+
   # Do branch painting
   # Probably a good idea to precede this with `rm -r paint-{resource}`
 
@@ -244,11 +315,12 @@ class Painter
     base_dir = "paint-#{resource.to_s}"
     paint_or_infer(resource,
                    "MERGE (d)-[:inferred_trait]->(t)
-                    RETURN COUNT(*)",
+                    RETURN d.page_id AS page, t.eol_pk AS trait",
                    "DELETE i 
-                    RETURN COUNT(*)",
+                    RETURN d.page_id AS page, t.eol_pk AS trait",
+                   base_dir,
                    # Don't page the deletion!!!
-                   base_dir, @pagesize, 500000)
+                   false)
     # Now, at this point, we *could* read the counts out of the files,
     # but if we had wanted that information we could have said "infer"
     # instead of "paint".
@@ -257,7 +329,7 @@ class Painter
   # Run the two cypher commands (RETURN for "infer" operation; MERGE
   # and DELETE for "paint")
 
-  def paint_or_infer(resource, merge, delete, base_dir, ps1, ps2)
+  def paint_or_infer(resource, merge, delete, base_dir, skipping)
     # Propagate traits from start point to descendants.  Filter by resource.
     # Currently assumes the painted trait has an object_term, but this
     # should be generalized to allow measurement as well
@@ -272,7 +344,7 @@ class Painter
           #{merge}"
     STDERR.puts(query)
     assert_path = 
-      run_paged_query(query, ps1, File.join(base_dir, "assert.csv"))
+      run_paged_query(query, @pagesize, File.join(base_dir, "assert.csv"))
     return unless assert_path
 
     # Erase inferred traits from stop point to descendants.
@@ -282,20 +354,22 @@ class Painter
                 (m:MetaData)-[:predicate]->
                 (:Term {uri: '#{STOP_TERM}'})
           WITH t, toInteger(m.measurement) as stop_id
-          MATCH (stop:Page {page_id: stop_id})<-[:parent*0..]-(d:Page)
+          MATCH (stop:Page {page_id: stop_id})
+          WITH stop, t
+          MATCH (stop)<-[:parent*0..]-(d:Page)
           MATCH (d)-[i:inferred_trait]->(t)
           #{delete}"
     STDERR.puts(query)
     retract_path =
-      run_paged_query(query, ps2, File.join(base_dir, "retract.csv"))
+      run_paged_query(query, @pagesize, File.join(base_dir, "retract.csv"), skipping)
     [assert_path, retract_path]
   end
 
   # For long-running queries (writes to path).  Return value if path
   # on success, nil on failure.
 
-  def run_paged_query(cql, pagesize, path)
-    Paginator.new(@query_fn).supervise_query(cql, nil, pagesize, path)
+  def run_paged_query(cql, pagesize, path, skipping=true)
+    Paginator.new(@query_fn).supervise_query(cql, nil, pagesize, path, skipping)
   end
 
   # For small / debugging queries
@@ -311,24 +385,31 @@ class Painter
   end
 
   # A particular query method for doing queries using the EOL v3 API over HTTP
-  # CODE COPIED FROM traits_dumper.rb - we might want to facto this out...
+  # CODE COPIED FROM traits_dumper.rb - we might want to factor this out...
 
   def self.query_via_http(server, token, cql)
     # Need to be a web client.
     # "The Ruby Toolbox lists no less than 25 HTTP clients."
     escaped = CGI::escape(cql)
     uri = URI("#{server}service/cypher?query=#{escaped}")
-    request = Net::HTTP::Get.new(uri)
-    request['Authorization'] = "JWT #{token}"
-    use_ssl = uri.scheme.start_with?("https")
-    response = Net::HTTP.start(uri.hostname, uri.port, :use_ssl => use_ssl) {|http|
-      http.request(request)
-    }
-    if response.is_a?(Net::HTTPSuccess)
-      JSON.parse(response.body)    # can return nil
-    else
-      STDERR.puts(response.body)
-      nil
+    use_ssl = (uri.scheme == "https")
+    Net::HTTP.start(uri.host, uri.port, :use_ssl => use_ssl) do |http|
+      request = Net::HTTP::Get.new(uri)
+      request['Authorization'] = "JWT #{token}"
+      response = http.request(request)
+      if response.is_a?(Net::HTTPSuccess)
+        JSON.parse(response.body)    # can return nil
+      else
+        STDERR.puts("** HTTP response: #{response.code} #{response.message}")
+        # Ideally we'd print only those lines that have useful 
+        # information (error message and backtrace).
+        # /home/jar/g/eol_website/lib/painter.rb:297:in `block in paintb': 
+        #     undefined method `[]' for nil:NilClass (NoMethodError)
+        #   from /home/jar/g/eol_website/lib/painter.rb:280:in `each'
+        STDERR.puts(cql)
+        STDERR.puts(response.body)
+        nil
+      end
     end
   end
 

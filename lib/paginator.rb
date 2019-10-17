@@ -49,7 +49,7 @@ class Paginator
   # exists the query is not repeated - the results from the previous
   # run are used directly without verification.
 
-  def supervise_query(query, headings, pagesize, path)
+  def supervise_query(query, headings, pagesize, path, skipping=true)
     if File.exist?(path)
       STDERR.puts "Using cached file #{path}"
       path
@@ -60,7 +60,7 @@ class Paginator
         STDERR.puts "There are cached results in #{pages_dir}"
       end
       begin
-        pages, count = get_query_pages(query, headings, pagesize, pages_dir)
+        pages, count = get_query_pages(query, headings, pagesize, pages_dir, skipping)
         if count > 0
           STDERR.puts("#{File.basename(path)}: #{pages.length} pages, #{count} records")
         end
@@ -73,6 +73,7 @@ class Paginator
       rescue => e
         STDERR.puts "** Failed to generate #{path}"
         STDERR.puts "** Exception: #{e}"
+        STDERR.puts e.backtrace.join("\n")
         nil
       end
     end
@@ -85,7 +86,7 @@ class Paginator
   # A file will be created for every successful query, but the pathname
   # is only included in the returned list if it contains at least one row.
 
-  def get_query_pages(query, headings, pagesize, pages_dir)
+  def get_query_pages(query, headings, pagesize, pages_dir, skipping)
     limit = (pagesize ? "#{pagesize}" : "10000000")
     pages = []
     skip = 0
@@ -104,20 +105,30 @@ class Paginator
         # records in the file.
         skip += pagesize if pagesize
       else
-        result = run_query(query + " SKIP #{skip} LIMIT #{limit}")
-        got = result["data"].length
-        # The skip == 0 test is a kludge that fixes a bug where the
-        # header row was being omitted in some cases
-        STDERR.puts(result) if got == 0
-        if got > 0 || skip == 0
-          emit_csv(result, headings, part_path)
-          pages.push(part_path)
-        else
-          FileUtils.mkdir_p File.dirname(part_path)
-          FileUtils.touch(part_path)
+        whole_query = query
+        if skipping
+          whole_query = whole_query + " SKIP #{skip}"
         end
-        skip += got
-        break if pagesize && got < pagesize
+        whole_query = whole_query + " LIMIT #{limit}"
+        result = run_query(whole_query)
+        if result
+          got = result["data"].length
+          # The skip == 0 test is a kludge that fixes a bug where the
+          # header row was being omitted in some cases
+          STDERR.puts(result) if got == 0
+          if got > 0 || skip == 0
+            emit_csv(result, headings, part_path)
+            pages.push(part_path)
+          else
+            FileUtils.mkdir_p File.dirname(part_path)
+            FileUtils.touch(part_path)
+          end
+          skip += got
+          break if pagesize && got < pagesize
+        else
+          STDERR.puts("No results for #{part_path}")
+          STDERR.puts(whole_query)
+        end
       end
       break unless pagesize
     end
