@@ -358,7 +358,6 @@ class Painter
           MATCH (stop:Page {page_id: stop_id})
           WITH stop, t
           MATCH (stop)<-[:parent*0..]-(d:Page)
-          MATCH (d)-[i:inferred_trait]->(t)
           #{delete}"
     STDERR.puts(query)
     retract_path =
