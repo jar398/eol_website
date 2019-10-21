@@ -33,6 +33,10 @@ module Eol
         "http://purl.obolibrary.org/obo/ENVO_00000447"
       end
 
+      def freshwater
+        "http://purl.obolibrary.org/obo/ENVO_00000873"
+      end
+
       def terrestrial
         "http://purl.obolibrary.org/obo/ENVO_00000446"
       end
@@ -194,7 +198,10 @@ module Eol
       end
 
       def flowers_visited_by
-        "http://purl.obolibrary.org/obo/RO_0002623"
+        [
+          "http://eol.org/schema/terms/FlowersVisitedBy",
+          "http://purl.obolibrary.org/obo/RO_0002623"
+        ]
       end
 
       def sex
@@ -241,6 +248,10 @@ module Eol
         "http://purl.obolibrary.org/obo/TO_0000850"
       end
 
+      def fossil_first
+        "http://eol.org/schema/terms/FossilFirst"
+      end
+
       def inverse(uri)
         INVERSES[uri]
       end
@@ -263,7 +274,8 @@ module Eol
         self.preyed_upon_by => self.preys_on,
         self.has_vector => self.vector_of,
         self.visited_by => self.visits,
-        self.visits_flowers_of => self.flowers_visited_by
+        self.visits_flowers_of => self.flowers_visited_by.first,
+        self.visits_flowers_of => self.flowers_visited_by.second
       }
 
       one_dir_inverses.merge(one_dir_inverses.invert)

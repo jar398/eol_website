@@ -50,8 +50,8 @@ class Painter
       painter.infer(resource)
     when "paint" then    # assert the inferences
       painter.paint(resource)
-    when "paintb" then    # assert the inferences
-      painter.paintb(resource)
+    when "merge" then    # assert the inferences
+      painter.merge(resource)
     when "count" then    # remove the inferences
       painter.count(resource)
     when "clean" then    # remove the inferences
@@ -273,7 +273,7 @@ class Painter
   #  1. The way to refer to the server directory using scp
   #  2. The way to refer to the server directory using http
 
-  def paintb(resource)
+  def merge(resource)
     server_base_url = "http://varela.csail.mit.edu/~jar/tmp/"
     server_base_scp = "varela:public_html/tmp/"
 
@@ -316,7 +316,8 @@ class Painter
     paint_or_infer(resource,
                    "MERGE (d)-[:inferred_trait]->(t)
                     RETURN d.page_id AS page, t.eol_pk AS trait",
-                   "DELETE i 
+                   "MATCH (d)-[i:inferred_trait]->(t)
+                    DELETE i 
                     RETURN d.page_id AS page, t.eol_pk AS trait",
                    base_dir,
                    # Don't page the deletion!!!
@@ -403,7 +404,7 @@ class Painter
         STDERR.puts("** HTTP response: #{response.code} #{response.message}")
         # Ideally we'd print only those lines that have useful 
         # information (error message and backtrace).
-        # /home/jar/g/eol_website/lib/painter.rb:297:in `block in paintb': 
+        # /home/jar/g/eol_website/lib/painter.rb:297:in `block in merge': 
         #     undefined method `[]' for nil:NilClass (NoMethodError)
         #   from /home/jar/g/eol_website/lib/painter.rb:280:in `each'
         STDERR.puts(cql)

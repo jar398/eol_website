@@ -5,6 +5,27 @@
 ---
 pms:
   language_name: Anglèis
+  about:
+    trait_bank:
+      title: TraitBank
+      body_html: <p>L'echip técnica e ëd gestion dij dàit ëd l'EdV a fà arferiment
+        a j'arsorse ëd dàit ëstruturà ant l'EdV- dàit ëd caraterìstiche e f'àutri
+        atribù, antërassion ecològiche e nòstra classificassion nativa, la Gerarchìa
+        ëd travaj dinàmich- ëd fasson coletiva sota 'l nòm ëd TraitBank. Ës contnù
+        a l'é gestì an manera un pò diferenta da nòstr contnù «clàssich»- plance,
+        filmà, argistrassion sonore e test descritiv- e a ven a taj për vàire còse.</p><p>TraitBank
+        a l'é pi recent che ëd rest ëd l'EdV; a l'é stàit concepì a l'adoss da la
+        diretris dl'Echip ëd Pàgine dë Spece Cynthia Parr, e a l'é stàit butà an fonsion
+        ant la version 2 ëd l'EdV an gené 2014. Da antlora ij dàit ëstruturà a son
+        ëstàit nòstra pi àuta priorità për ël dësvlup dël contnù.</p><p>Adess chiel
+        a peul <a href='%{example_search_path}'>sërché</a> o navighé ant l'EdV për
+        dàit ëstruturà, o dëscarieje, o a peul connòssje an nòstra neuva scheda ëd
+        vista general sota la forma ëd <a href='%{autogen_page_path}'>test àuto-generà</a>.
+        Parèj dël rest dël contnù ëd l'EdV, sòn a l'é disponìbil për la riutilisassion
+        e a l'ha ij dàit detajà d'atribussion an manera che chiel a peula arconòssje
+        se a-j deuvra an sò travaj.</p><p>Si dàit a son modlà tanme un <a href='%{property_graph_url}'>graf
+        ëd propietà</a> an <a href='%{neo4j_url}'>neo4j</a>. Dij <a href='%{data_services_path}'>Servissi
+        ëd dàit</a> a son ëdcò disponìbij.</p>
   account_already_linked: sò cont a l'é già colegà a EdV
   account_not_linked: sò cont a l'é non gropà a EdV
   advanced: avansà
@@ -125,7 +146,7 @@ pms:
         add: '%{user} a l''ha giontà n''associassion a la colession %{associated}'
         remove: '%{user} a l''ha gavà l''associassion a la colession %{associated}'
       collection:
-        add: '%{user} a l''ha modificà la colession'
+        add: '%{user} a l''ha creà la colession'
         change: '%{user} a l''ha modificà %{field} da «%{from}» a «%{to}»'
       content:
         add: '%{user} a l''ha giontà ël mojen %{medium} për la pàgina %{page}'
@@ -168,6 +189,7 @@ pms:
     location: locassion
     location_verbatim: paròla për paròla
     longitude: longitùdin
+    original_media_file: archivi ëd mojen original
     owner: drit d'autor
     photographer: fotògraf
     publisher: editor
@@ -347,6 +369,151 @@ pms:
     la: Latin
     lb: Lussemborghèis; Letzeburgesch
     lg: Ganda
+    li: limborghèis
+    ln: lingala
+    lo: lao
+    lt: lituan
+    lu: luba-katanga
+    lv: léton
+    mg: malgass
+    mh: marshalèis
+    mi: maòri
+    mk: macédon
+    ml: malayalam
+    mn: mòngol
+    mr: marathi
+    ms: malèis
+    mt: maltèis
+    my: birman
+    na: nauru
+    nb: bokmål, norvegèis; norvegèis bokmål
+    nd: ndebele dël nòrd
+    ne: nepalèis
+    ng: ndonga
+    nl: olandèis; flamand
+    nn: norvegèis nynorsk; nynorsk, norvegèis
+    "": norvegèis
+    nr: ndebele dël sud
+    nv: navajo; navaho
+    ny: chewa; chichewa; nyanja
+    oc: ossitan (apress 1500)
+    oj: ojibwa
+    om: oromo
+    or: oriya
+    os: osset
+    pa: panjabi; punjabi
+    pi: pali
+    pl: polonèis
+    ps: pushto; pashton
+    pt: portughèis
+    qu: quechua
+    rm: romancc
+    rn: rundi
+    ro: romen; moldav
+    ru: russ; russi
+    rw: kinyarwanda
+    sa: sànscrit
+    sc: sard
+    sd: sindhi
+    se: sami dël Nòrd
+    sg: sango
+    si: singalèis
+    sk: slovach
+    sl: sloven
+    sm: samoan
+    sn: shona
+    so: sòmal
+    sq: albanèis
+    sr: serb
+    ss: swati
+    st: sotho dël sud
+    su: sondanèis
+    sv: svedèis
+    sw: swahili
+    ta: tamil
+    te: telugu
+    tg: tagich
+    th: thai
+    ti: tigrinya
+    tk: turcmen
+    tl: tagalog
+    tn: tswana
+    to: tongan (ìsole Tonga)
+    tr: turch
+    ts: tsonga
+    tt: Tatar
+    tw: twi
+    ty: taitian
+    ug: uighur; uyghur
+    uk: ucrain
+    ur: urdu
+    uz: usbech
+    ve: venda
+    vi: vietnamèis
+    vo: volapük
+    wa: valon
+    wo: wolof
+    xh: xhosa
+    yi: yiddish
+    yo: yoruba
+    za: zhuang; chuang
+    zh: cinèis
+    zu: zulù
+  layout_sign_in: Rintré ant ël sistema
+  layout_sign_up: Anscriv-se
+  layout_sign_out: Seurte dal sistema
+  literature_and_references_header: Bibliografìa e arferiment
+  maps:
+    empty: A-i é gnun-e carte disponìbij për costa pàgina.
+    occurrence_caption: Ocorense conossùe, esemplar cujì e osservassion ëd %{page_name}
+    other_maps_title: Carte nen antërative
+  medium:
+    untitled:
+      image: Plancia sensa tìtol
+      image_of: Plancia ëd %{page_name}
+      video: Filmà sensa tìtol
+      video_of: Filmà ëd %{page_name}
+      sound: Son sensa tìtol
+      sound_of: Sonor ëd %{page_name}
+      map: Carta sensa tìtol
+      map_of: Carta ëd %{page_name}
+      js_map: Carta antërativa sensa tìtol
+      js_map_of: Carta antërativa ëd %{page_name}
+    subclasses:
+      image: plancia
+      video: filmà
+      sound: son
+      map: carta
+      js_map: carta antërativa
+  medium_collect_button: cheuje ij mojen
+  medium_description_blank: A-i é gnun-a descrission fornìa për cost oget-sì.
+  medium_header_title: 'Tìtol:'
+  medium_header_description: 'Descrission:'
+  names:
+    hide_langs:
+      one: stërmé na lenga
+      other: stërmé %{count} lenghe
+    prefer: preferì
+    preferred_in_language_for_page: '%{name} a l''é adess ël nòm vernacolar preferì
+      an %{language} për %{page}'
+    show_more_langs:
+      one: smon-e na lenga ëd pi
+      other: smon-e %{count} lenghe ëd pi
+  nav:
+    about: A propòsit
+    discuss: Dëscute
+    education: Educassion
+    search:
+      no_results_html: <strong>Gnun arzultà confermà</strong><br />Sgnaché su A cap
+        për vëdde j'arzultà nen controlà
+      placeholder: Arserca ant l'EdV...
+    trait_bank: TraitBank
+  name_preferred_label: preferì
+  page_icon_counts:
+    header:
+      one: Mej plancia për la pàgina
+      other: Mej plance për le pàgine
+  page_icon_created: Plancia «%{name}» spostà an àut.
   recaptcha: Ch'a scriva le doe paròle o nùmer ch'a s-ciàira sì-sota
   sign_in: Rintré ant ël sistema
 ...
