@@ -20,13 +20,16 @@ def doit(server, api_token, query, format, unsafe):
     url = "%s/service/cypher" % server.rstrip('/')
     if format == None: format = "cypher"
     data = {"query": query, "format": format}
-    headers = {"accept": "application/json",
+    response_content_type = "application/json"
+    if format == "csv":
+        response_type = "text/csv"
+    headers = {"accept": response_content_type,
                "authorization": "JWT " + api_token}
     if unsafe:
       r = requests.post(url,
                         stream=(format=="csv"),
                         headers=headers,
-                        params=data)
+                        data=data)
     else:
       r = requests.get(url,
                        stream=(format=="csv"),
@@ -70,7 +73,7 @@ if __name__ == '__main__':
     parser.add_argument('--queryfile', help='file containing cypher query to run', default=None)
     parser.add_argument('--server', help='URL for EOL web app server', default=default_server)
     parser.add_argument('--format', help='result format (json or csv)', default=None)
-    parser.add_argument('--unsafe', help='set to true if an unsafe operation (DELETE etc)', default=False)
+    parser.add_argument('--unsafe', help='set to true if a graph-modifying operation (DELETE etc)', default=False)
     args=parser.parse_args()
     query = args.query
     if args.queryfile != None:
