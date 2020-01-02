@@ -92,6 +92,21 @@ Relationships:
   about the taxon.  Many `Trait`s (or no
   `Trait`s) can be `trait`-linked from a given `Page`.
 * `inferred_trait` link: same as `trait`, but the applicability of the
+  `Trait` to the `Page` is inferred and the `Trait` belongs to a different 
+  `Page` (i.e. this `Trait` node has a different `Page` that is 
+  `trait`-related to it).
+
+* `parent` link (to another `Page` node): taxonomic subsumption; the
+  target is [intended to be] the `Page` node for the smallest taxon in
+  the dynamic hierarchy that contains, but is different from, the one
+  for this `Page`.  The `parent` link is unique, if present, and is
+  only absent for the root of the dynamic hierarchy and for Page nodes
+  that don't belong to the dynamic hierarchy.
+* `trait` link (to a `Trait` node): the target node gives categorical or
+  quantitative information
+  about the taxon.  Many `Trait`s (or no
+  `Trait`s) can be `trait`-linked from a given `Page`.
+* `inferred_trait` link: same as `trait`, but the applicability of the
   `Trait` to the `Page` is inferred.  The `Page` is a descendant of
   the `Page` that the `Trait` belongs to.  Many `Page`s can be related
   by `inferred_trait` to a single `Trait`.

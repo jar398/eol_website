@@ -123,7 +123,7 @@ class Paginator
           if got > 0 || skip == 0
             emit_csv(result, headings, part_path)
             chunks.push(part_path)
-          else
+
             FileUtils.mkdir_p File.dirname(part_path)
             FileUtils.touch(part_path)
           end
