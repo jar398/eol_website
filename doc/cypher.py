@@ -34,7 +34,8 @@ def doit(server, api_token, query, format, unsafe):
                        params=data)
     if r.status_code != 200:
         sys.stderr.write('HTTP status %s\n' % r.status_code)
-    ct = r.headers.get("Content-Type").split(';')[0]
+    ct = r.headers.get("Content-Type")
+    if ct: ct = ct.split(';')[0]
     if ct == "application/json":
         j = {}
         try:
