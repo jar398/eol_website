@@ -68,11 +68,15 @@ The shell variables / parameters are:
 For example:
 
     export SERVER="https://beta.eol.org/"
-    export TOKEN=`cat ~/Sync/eol/beta.token`
+    export TOKEN=`cat beta.token`
     export STAGE_SCP_LOCATION="varela:public_html/tmp/"
     export STAGE_WEB_LOCATION="http://varela.csail.mit.edu/~jar/tmp/"
 
     RESOURCE=640 COMMAND=qc ruby -r ./lib/painter.rb -e Painter.main
+
+(I'm using the bash syntax for defining environment variables
+effective for a single command; in other shells separate `export`
+commands might be needed for `RESOURCE` and `COMMAND`.)
 
 The ordinary sequence of operations would be:
 
