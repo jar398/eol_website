@@ -1177,8 +1177,19 @@ class TraitBank
     end
 
     def create_term(options)
-      if (existing_term = term(options[:uri])) # NO DUPLICATES!
-        return existing_term unless options.delete(:force)
+      if not options[:uri]
+        puts "ERROR: no URI for this term"
+      elsif options[:url] == ''
+        puts "ERROR: empty URI for this term"
+      end
+      begin
+        if (existing_term = term(options[:uri])) # NO DUPLICATES!
+          return existing_term unless options.delete(:force)
+        end
+      rescue => e
+        puts e.backtrace
+        puts "OPTIONS: #{options.inspect}"
+        raise e
       end
       options[:section_ids] = options[:section_ids] ?
         Array(options[:section_ids]).join(",") : ""
@@ -1209,6 +1220,7 @@ class TraitBank
         count = Rails.cache.read("trait_bank/terms_count") || 0
         Rails.cache.write("trait_bank/terms_count", count + 1)
       rescue => e
+        puts e.backtrace
         raise e
       end
       term_node
